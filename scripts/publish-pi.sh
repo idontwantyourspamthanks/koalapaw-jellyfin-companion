@@ -5,11 +5,11 @@
 #   /mnt/bigdrive/Content/web/koalapaw-repo  →  https://ryansraspi.hopto.org/koalapaw-repo/
 #
 # Override with:
-#   PI_HOST=pi@ryansraspi.local PI_REPO_PATH=/mnt/bigdrive/Content/web/koalapaw-repo ./scripts/publish-pi.sh
+#   PI_HOST=ryan@ryansraspi.local PI_REPO_PATH=/mnt/bigdrive/Content/web/koalapaw-repo ./scripts/publish-pi.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PI_HOST="${PI_HOST:-pi@ryansraspi.hopto.org}"
+PI_HOST="${PI_HOST:-ryan@ryansraspi.hopto.org}"
 PI_REPO_PATH="${PI_REPO_PATH:-/mnt/bigdrive/Content/web/koalapaw-repo}"
 
 if [[ ! -f "$ROOT/repo/manifest.json" ]]; then
