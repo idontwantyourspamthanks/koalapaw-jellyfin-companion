@@ -70,7 +70,7 @@ entry = {
     "category": "$CATEGORY",
     "versions": [{
         "version": "$VERSION",
-        "changelog": "Skeleton: registers and logs a heartbeat scheduled task.",
+        "changelog": "Remove spike 1 DEV task; loudness scan is the production path.",
         "targetAbi": "$TARGET_ABI",
         "sourceUrl": "$SOURCE_URL",
         "checksum": "$CHECKSUM",

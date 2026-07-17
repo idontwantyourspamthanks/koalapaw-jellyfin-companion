@@ -1,6 +1,6 @@
 name: "KoalaPaw Server Companion"
 guid: "cea40e65-c04f-4854-b6c4-3428360087fe"
-version: "0.0.2.0"
+version: "0.0.4.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Skip intros and even out video loudness for KoalaPaw (and any Jellyfin client)."
@@ -13,5 +13,8 @@ owner: "koalapaw"
 artifacts:
   - "KoalaPaw.ServerCompanion.dll"
 changelog: >
+  0.0.4.0 — Remove spike 1 DEV task; loudness scan is the production path.
+  0.0.3.1 — Loudness scan: IncludeItemTypes Episode/Movie (avoid unknown-type deserialize crash).
+  0.0.3.0 — Video loudness scan: ffmpeg loudnorm → NormalizationGain (daily/interval).
   0.0.2.0 — Spike 1 task: write NormalizationGain on a video episode (manual run).
   0.0.1.0 — Skeleton: registers and logs a heartbeat scheduled task.

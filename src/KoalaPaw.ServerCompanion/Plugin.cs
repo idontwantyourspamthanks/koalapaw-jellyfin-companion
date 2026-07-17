@@ -8,7 +8,7 @@ namespace KoalaPaw.ServerCompanion;
 
 /// <summary>
 /// KoalaPaw Server Companion — one plugin, two analysers (loudness + intro/credits).
-/// Skeleton: loads cleanly and exposes a heartbeat scheduled task so we can prove install.
+/// Skeleton plus loudness analyser: loads cleanly and schedules video NormalizationGain scans.
 /// </summary>
 public class Plugin : BasePlugin<PluginConfiguration>
 {
