@@ -1,0 +1,16 @@
+name: "KoalaPaw Server Companion"
+guid: "cea40e65-c04f-4854-b6c4-3428360087fe"
+version: "0.0.1.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+overview: "Skip intros and even out video loudness for KoalaPaw (and any Jellyfin client)."
+description: >
+  Open-source Jellyfin companion for KoalaPaw. Analyses your library in the
+  background and writes standard Jellyfin fields (NormalizationGain, MediaSegments)
+  so clients stay thin. Makes zero outbound network calls.
+category: "General"
+owner: "koalapaw"
+artifacts:
+  - "KoalaPaw.ServerCompanion.dll"
+changelog: >
+  0.0.1.0 — Skeleton: registers and logs a heartbeat scheduled task.
