@@ -29,6 +29,29 @@ public static class IntroCorrelator
     public readonly record struct IntroGuess(double StartSeconds, double EndSeconds, double Confidence);
 
     /// <summary>
+    /// Correlate tail fingerprints for a common credits suffix.
+    /// [EndSeconds] is the credit length measured back from EOF (StartSeconds stays 0).
+    /// </summary>
+    public static IntroGuess? GuessOutro(IReadOnlyList<uint[]?> tailFingerprints)
+    {
+        var reversed = tailFingerprints
+            .Select(f => f is null ? null : ReverseCopy(f))
+            .ToList();
+        return GuessIntro(reversed);
+    }
+
+    private static uint[] ReverseCopy(uint[] source)
+    {
+        var copy = new uint[source.Length];
+        for (var i = 0; i < source.Length; i++)
+        {
+            copy[i] = source[source.Length - 1 - i];
+        }
+
+        return copy;
+    }
+
+    /// <summary>
     /// Correlate fingerprints from one season. Needs ≥2 non-null prints.
     /// Returns null when unsure.
     /// </summary>

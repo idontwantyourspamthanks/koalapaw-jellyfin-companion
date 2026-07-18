@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -11,12 +10,13 @@ using Microsoft.Extensions.Logging;
 namespace KoalaPaw.ServerCompanion.Segments;
 
 /// <summary>
-/// Audio-only chromaprint over the head of a file (first <see cref="HeadSeconds"/>).
+/// Audio-only chromaprint over a capped head or tail window.
 /// Raw fingerprint is a sequence of 32-bit hashes (~0.1238s each).
 /// </summary>
 public sealed class ChromaprintProbe
 {
     public const int HeadSeconds = 600;
+    public const int TailSeconds = 300;
 
     /// <summary>Approximate seconds covered by one chromaprint raw item.</summary>
     public const double ItemSeconds = 0.1238;
@@ -30,17 +30,31 @@ public sealed class ChromaprintProbe
         _logger = logger;
     }
 
-    public async Task<uint[]?> FingerprintHeadAsync(string path, CancellationToken cancellationToken)
+    public Task<uint[]?> FingerprintHeadAsync(string path, CancellationToken cancellationToken) =>
+        FingerprintAsync(
+            path,
+            $"-hide_banner -nostats -vn -t {HeadSeconds.ToString(CultureInfo.InvariantCulture)} -i \"{path}\" " +
+            "-ac 2 -f chromaprint -fp_format raw pipe:1",
+            cancellationToken);
+
+    /// <summary>Last <see cref="TailSeconds"/> of audio (sseof seek).</summary>
+    public Task<uint[]?> FingerprintTailAsync(string path, CancellationToken cancellationToken) =>
+        FingerprintAsync(
+            path,
+            $"-hide_banner -nostats -vn -sseof -{TailSeconds.ToString(CultureInfo.InvariantCulture)} -i \"{path}\" " +
+            "-ac 2 -f chromaprint -fp_format raw pipe:1",
+            cancellationToken);
+
+    private async Task<uint[]?> FingerprintAsync(
+        string path,
+        string args,
+        CancellationToken cancellationToken)
     {
         var ffmpeg = _encoder.EncoderPath;
         if (string.IsNullOrWhiteSpace(ffmpeg) || string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
-
-        var args =
-            $"-hide_banner -nostats -vn -t {HeadSeconds.ToString(CultureInfo.InvariantCulture)} " +
-            $"-i \"{path}\" -ac 2 -f chromaprint -fp_format raw pipe:1";
 
         using var process = new Process
         {

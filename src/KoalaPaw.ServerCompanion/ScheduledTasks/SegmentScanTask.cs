@@ -17,8 +17,8 @@ using Microsoft.Extensions.Logging;
 namespace KoalaPaw.ServerCompanion.ScheduledTasks;
 
 /// <summary>
-/// Season-grouped intro scan: chromaprint heads → correlate → write MediaSegments (Intro).
-/// Incremental: skips seasons where every episode already has an Intro from any provider.
+/// Season-grouped intro + credits scan: chromaprint head/tail → correlate → MediaSegments.
+/// Incremental: skips seasons where every episode already has both Intro and Outro.
 /// </summary>
 public class SegmentScanTask : IScheduledTask
 {
@@ -41,12 +41,12 @@ public class SegmentScanTask : IScheduledTask
         _analyser = analyser;
     }
 
-    public string Name => "KoalaPaw intro segment scan";
+    public string Name => "KoalaPaw intro & credits scan";
 
     public string Key => "KoalaPawIntroSegmentScan";
 
     public string Description =>
-        "Fingerprints episode openings and writes Jellyfin Intro MediaSegments when confident.";
+        "Fingerprints episode openings and endings; writes Jellyfin Intro/Outro MediaSegments when confident.";
 
     public string Category => "KoalaPaw";
 
@@ -100,13 +100,15 @@ public class SegmentScanTask : IScheduledTask
             foreach (var ep in season)
             {
                 var opts = _libraryManager.GetLibraryOptions(ep);
-                var existing = await _segments.GetSegmentsAsync(
+                var existing = (await _segments.GetSegmentsAsync(
                         ep,
-                        [Jellyfin.Database.Implementations.Enums.MediaSegmentType.Intro],
+                        [MediaSegmentType.Intro, MediaSegmentType.Outro],
                         opts,
                         filterByProvider: true)
-                    .ConfigureAwait(false);
-                if (!existing.Any())
+                    .ConfigureAwait(false)).ToList();
+                var hasIntro = existing.Any(s => s.Type == MediaSegmentType.Intro);
+                var hasOutro = existing.Any(s => s.Type == MediaSegmentType.Outro);
+                if (!hasIntro || !hasOutro)
                 {
                     needs = true;
                     break;
@@ -121,7 +123,7 @@ public class SegmentScanTask : IScheduledTask
 
         if (todo.Count == 0)
         {
-            _logger.LogInformation("SegmentScan: nothing to do (no seasons missing Intro)");
+            _logger.LogInformation("SegmentScan: nothing to do (no seasons missing Intro/Outro)");
             progress.Report(100);
             return;
         }
@@ -151,7 +153,7 @@ public class SegmentScanTask : IScheduledTask
             progress.Report(100.0 * done / todo.Count);
         }
 
-        _logger.LogInformation("SegmentScan: finished — staged intros on {Staged} episode(s)", staged);
+        _logger.LogInformation("SegmentScan: finished — staged segments on {Staged} episode(s)", staged);
         progress.Report(100);
     }
 }

@@ -34,6 +34,21 @@ public class IntroCorrelatorTests
         Assert.Null(IntroCorrelator.GuessIntro([BuildRun(200, seed: 1)]));
     }
 
+    [Fact]
+    public void GuessOutro_matchingTails_findsCreditLength()
+    {
+        // Fingerprints are chronologic; common suffix → reverse → GuessIntro head window.
+        var credits = BuildRun(length: ChromaprintProbe.SecondsToIndex(35), seed: 77);
+        var a = Concat(BuildRun(200, seed: 1), credits);
+        var b = Concat(BuildRun(200, seed: 2), credits);
+        var c = Concat(BuildRun(200, seed: 3), credits);
+
+        var guess = IntroCorrelator.GuessOutro([a, b, c]);
+        Assert.NotNull(guess);
+        Assert.InRange(guess!.Value.EndSeconds, 25, 50);
+        Assert.True(guess.Value.Confidence >= IntroCorrelator.MinMatchRate);
+    }
+
     private static uint[] BuildRun(int length, int seed)
     {
         var rng = new Random(seed);
