@@ -70,7 +70,7 @@ entry = {
     "category": "$CATEGORY",
     "versions": [{
         "version": "$VERSION",
-        "changelog": "Remove spike 1 DEV task; loudness scan is the production path.",
+        "changelog": "Intro scan: IncludeItemTypes Episode (fix unknown-type deserialize crash).",
         "targetAbi": "$TARGET_ABI",
         "sourceUrl": "$SOURCE_URL",
         "checksum": "$CHECKSUM",
