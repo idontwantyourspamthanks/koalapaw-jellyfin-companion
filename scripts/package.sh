@@ -56,11 +56,31 @@ CHECKSUM="$(md5sum "$ZIP_PATH" | awk '{print $1}')"
 SOURCE_URL="$REPO_BASE_URL/$VERSION/$ZIP_NAME"
 
 # Jellyfin custom repos expect a JSON *array* of packages.
-python3 - "$ROOT/repo/manifest.json" <<PY
-import json, sys
+python3 - "$ROOT/repo/manifest.json" "$ROOT/build.yaml" <<PY
+import json, re, sys
 from pathlib import Path
 
+import yaml
+
 manifest_path = Path(sys.argv[1])
+build_yaml = Path(sys.argv[2])
+version = "$VERSION"
+
+# Pull this version's entry from build.yaml's folded "changelog: >" block. Entries are lines like
+# "0.0.6.0 — <text>"; YAML folding joins them with spaces, so match up to the next "N.N.N.N —".
+changelog = "$OVERVIEW"  # fallback if the entry can't be read
+try:
+    raw = (yaml.safe_load(build_yaml.read_text()) or {}).get("changelog", "")
+    match = re.search(
+        re.escape(version) + r"\s*—\s*(.*?)(?=\s+\d+(?:\.\d+)+\s*—|$)",
+        raw,
+        re.DOTALL,
+    )
+    if match and match.group(1).strip():
+        changelog = match.group(1).strip()
+except Exception:
+    pass
+
 entry = {
     "guid": "$GUID",
     "name": "$NAME",
@@ -69,8 +89,8 @@ entry = {
     "owner": "$OWNER",
     "category": "$CATEGORY",
     "versions": [{
-        "version": "$VERSION",
-        "changelog": "Intro scan: IncludeItemTypes Episode (fix unknown-type deserialize crash).",
+        "version": version,
+        "changelog": changelog,
         "targetAbi": "$TARGET_ABI",
         "sourceUrl": "$SOURCE_URL",
         "checksum": "$CHECKSUM",

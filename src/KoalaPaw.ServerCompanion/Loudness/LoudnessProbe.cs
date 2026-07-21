@@ -23,9 +23,9 @@ public sealed class LoudnessProbe
         RegexOptions.Compiled | RegexOptions.Singleline);
 
     private readonly IMediaEncoder _encoder;
-    private readonly ILogger _logger;
+    private readonly ILogger<LoudnessProbe> _logger;
 
-    public LoudnessProbe(IMediaEncoder encoder, ILogger logger)
+    public LoudnessProbe(IMediaEncoder encoder, ILogger<LoudnessProbe> logger)
     {
         _encoder = encoder;
         _logger = logger;
@@ -106,6 +106,10 @@ public sealed class LoudnessProbe
 
             process.BeginErrorReadLine();
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+            // WaitForExitAsync can return before the async ErrorDataReceived callbacks have drained;
+            // the loudnorm JSON is the last thing on stderr, so flush pending output synchronously.
+            process.WaitForExit();
 
             if (process.ExitCode != 0)
             {

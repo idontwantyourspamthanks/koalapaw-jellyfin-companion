@@ -6,8 +6,17 @@ especially KoalaPaw on Android TV — stays thin.
 
 **Licence:** GPL-3.0 (links in-process against Jellyfin). Makes **zero outbound network calls**.
 
-This is the skeleton: plugin loads, registers a heartbeat scheduled task, and publishes via a
-Jellyfin plugin catalog (path B). Analysers come next.
+Everything runs on the server against your existing library — no external services:
+
+- **Loudness scan** — measures integrated loudness with jellyfin-ffmpeg `loudnorm` and writes
+  Jellyfin’s standard `NormalizationGain` field (ReplayGain 2.0: `-18 − LUFS`) on movies/episodes
+  that don’t have one yet.
+- **Intro & credits scan** — chromaprint-fingerprints episode openings and endings, correlates a
+  season’s episodes, and writes Jellyfin `Intro`/`Outro` MediaSegments when it’s confident (it emits
+  nothing on weak matches).
+
+Both run as scheduled tasks (daily + interval), incrementally — items/seasons that already have
+results are skipped — one ffmpeg at a time at below-normal priority so a Pi stays usable.
 
 Stable plugin GUID: `cea40e65-c04f-4854-b6c4-3428360087fe` (do not change).
 
@@ -15,6 +24,7 @@ Stable plugin GUID: `cea40e65-c04f-4854-b6c4-3428360087fe` (do not change).
 
 - .NET 9 SDK (build)
 - Jellyfin **10.11.x** on the server (`targetAbi` `10.11.0.0`)
+- `jellyfin-ffmpeg` configured in Jellyfin (the plugin drives `IMediaEncoder.EncoderPath`)
 - `zip`, `rsync`, `curl` for package/publish scripts
 
 ## Dev catalog (your Pi)
@@ -36,11 +46,12 @@ Then in **Jellyfin Dashboard → Plugins → Repositories** add:
 `https://ryansraspi.hopto.org/koalapaw-repo/manifest.json`
 
 Install **KoalaPaw Server Companion** → restart Jellyfin → Dashboard → Scheduled Tasks should show
-**KoalaPaw companion heartbeat**. Run it once; server logs should say the companion is alive.
+the KoalaPaw tasks (**video loudness scan**, **intro & credits scan**, plus a small heartbeat). Run
+one once; server logs should show it analysing and writing fields.
 
 ### Republish / update
 
-1. Bump `version` in `build.yaml` (e.g. `0.0.2.0`)
+1. Bump `version` in `build.yaml` (e.g. `0.0.7.0`) and add its `changelog:` entry
 2. `./scripts/package.sh && ./scripts/publish-pi.sh`
 3. Dashboard → Plugins → KoalaPaw → update / reinstall → **restart**
 
@@ -54,11 +65,16 @@ origin. The Android client will eventually write that URL via the “do it for t
 ## Layout
 
 ```text
-src/KoalaPaw.ServerCompanion/   # .NET plugin
-scripts/package.sh              # build + manifest
+src/KoalaPaw.ServerCompanion/
+  Configuration/                # plugin configuration
+  Loudness/                     # LoudnessProbe — ffmpeg loudnorm → NormalizationGain
+  ScheduledTasks/               # loudness scan, intro/credits scan, heartbeat
+  Segments/                     # chromaprint probe, intro/outro correlation, segment provider
+scripts/package.sh              # build DLL + zip + manifest (changelog from build.yaml)
 scripts/publish-pi.sh           # rsync to hopto web root
 repo/                           # catalog output (generated; committed optional)
-build.yaml                      # name, guid, version, targetAbi
+build.yaml                      # name, guid, version, targetAbi, changelog
+tests/                          # xUnit tests for the pure analysis logic
 ```
 
 ## Related

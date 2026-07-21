@@ -14,5 +14,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Segments.PendingSegmentResults>();
         serviceCollection.AddSingleton<Segments.ChromaprintProbe>();
         serviceCollection.AddSingleton<Segments.IntroSeasonAnalyser>();
+        serviceCollection.AddSingleton<Loudness.LoudnessProbe>();
     }
 }

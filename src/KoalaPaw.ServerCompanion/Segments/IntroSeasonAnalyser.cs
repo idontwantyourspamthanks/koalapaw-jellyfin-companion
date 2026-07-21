@@ -158,9 +158,18 @@ public sealed class IntroSeasonAnalyser
             }
 
             _pending.Set(ep.Id, segments);
-            await _segments.RunSegmentPluginProviders(ep, libraryOptions, forceOverwrite: false, cancellationToken)
-                .ConfigureAwait(false);
-            _pending.Clear(ep.Id);
+            try
+            {
+                await _segments.RunSegmentPluginProviders(ep, libraryOptions, forceOverwrite: false, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                // Always evict the staged entry — if the provider run throws, leaving it behind would
+                // leak into a later, unrelated GetMediaSegments call for this item.
+                _pending.Clear(ep.Id);
+            }
+
             staged++;
         }
 

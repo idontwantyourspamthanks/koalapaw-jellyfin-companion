@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
@@ -11,6 +11,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- The plugin references Jellyfin with ExcludeAssets=runtime (Jellyfin supplies them in-proc),
+         but tests that touch Jellyfin types (e.g. MediaSegmentDto) need the assembly at runtime. -->
+    <PackageReference Include="Jellyfin.Model" Version="10.11.11" />
   </ItemGroup>
 
   <ItemGroup>

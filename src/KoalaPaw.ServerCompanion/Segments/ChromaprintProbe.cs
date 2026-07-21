@@ -15,7 +15,11 @@ namespace KoalaPaw.ServerCompanion.Segments;
 /// </summary>
 public sealed class ChromaprintProbe
 {
-    public const int HeadSeconds = 600;
+    /// <summary>
+    /// Head window to fingerprint. Intro detection inspects at most ~155s (IntroCorrelator.MaxIntroSeconds);
+    /// 200s leaves a generous margin while keeping the probe ~4× cheaper than the old 600s window.
+    /// </summary>
+    public const int HeadSeconds = 200;
     public const int TailSeconds = 300;
 
     /// <summary>Approximate seconds covered by one chromaprint raw item.</summary>
@@ -91,14 +95,13 @@ public sealed class ChromaprintProbe
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             var bytes = ms.ToArray();
-            if (bytes.Length < 4 || bytes.Length % 4 != 0)
+            var items = ParseFingerprintBytes(bytes);
+            if (items is null)
             {
                 _logger.LogWarning("Chromaprint: unexpected byte length {Len} for {Path}", bytes.Length, path);
                 return null;
             }
 
-            var items = new uint[bytes.Length / 4];
-            Buffer.BlockCopy(bytes, 0, items, 0, bytes.Length);
             return items;
         }
         catch (OperationCanceledException)
@@ -122,6 +125,23 @@ public sealed class ChromaprintProbe
             _logger.LogError(ex, "Chromaprint failed for {Path}", path);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Convert raw chromaprint bytes to a sequence of 32-bit hashes. The bytes are reinterpreted
+    /// in native byte order via <see cref="Buffer.BlockCopy"/> — little-endian on every platform we
+    /// ship to. Returns null when the length isn't a positive multiple of 4.
+    /// </summary>
+    public static uint[]? ParseFingerprintBytes(byte[] bytes)
+    {
+        if (bytes.Length < 4 || bytes.Length % 4 != 0)
+        {
+            return null;
+        }
+
+        var items = new uint[bytes.Length / 4];
+        Buffer.BlockCopy(bytes, 0, items, 0, bytes.Length);
+        return items;
     }
 
     public static double IndexToSeconds(int index) => index * ItemSeconds;

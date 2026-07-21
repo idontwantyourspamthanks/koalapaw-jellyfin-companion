@@ -8,7 +8,6 @@ using Jellyfin.Data.Enums;
 using KoalaPaw.ServerCompanion.Loudness;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
@@ -31,11 +30,11 @@ public class LoudnessScanTask : IScheduledTask
     public LoudnessScanTask(
         ILogger<LoudnessScanTask> logger,
         ILibraryManager libraryManager,
-        IMediaEncoder mediaEncoder)
+        LoudnessProbe probe)
     {
         _logger = logger;
         _libraryManager = libraryManager;
-        _probe = new LoudnessProbe(mediaEncoder, logger);
+        _probe = probe;
     }
 
     public string Name => "KoalaPaw video loudness scan";
