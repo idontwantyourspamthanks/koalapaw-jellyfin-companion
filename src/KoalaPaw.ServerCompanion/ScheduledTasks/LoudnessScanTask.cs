@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using KoalaPaw.ServerCompanion.Bookkeeping;
 using KoalaPaw.ServerCompanion.Loudness;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -16,25 +17,26 @@ namespace KoalaPaw.ServerCompanion.ScheduledTasks;
 
 /// <summary>
 /// Background loudness scan for video items: ffmpeg audio-only → <see cref="BaseItem.NormalizationGain"/>.
-/// Incremental (skips items that already have a gain), one ffmpeg at a time, BelowNormal priority.
+/// Incremental (skips items that already have a gain or previously failed), one ffmpeg at a time,
+/// BelowNormal priority.
 /// </summary>
-public class LoudnessScanTask : IScheduledTask
+public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
 {
-    /// <summary>Cap per run so a first install on a huge library doesn't hog the Pi overnight.</summary>
-    public const int MaxItemsPerRun = 40;
-
     private readonly ILogger<LoudnessScanTask> _logger;
     private readonly ILibraryManager _libraryManager;
     private readonly LoudnessProbe _probe;
+    private readonly AnalysisStore _analysisStore;
 
     public LoudnessScanTask(
         ILogger<LoudnessScanTask> logger,
         ILibraryManager libraryManager,
-        LoudnessProbe probe)
+        LoudnessProbe probe,
+        AnalysisStore analysisStore)
     {
         _logger = logger;
         _libraryManager = libraryManager;
         _probe = probe;
+        _analysisStore = analysisStore;
     }
 
     public string Name => "KoalaPaw video loudness scan";
@@ -52,6 +54,10 @@ public class LoudnessScanTask : IScheduledTask
         [
             new TaskTriggerInfo
             {
+                Type = TaskTriggerInfoType.StartupTrigger,
+            },
+            new TaskTriggerInfo
+            {
                 Type = TaskTriggerInfoType.DailyTrigger,
                 TimeOfDayTicks = TimeSpan.FromHours(3).Ticks,
             },
@@ -65,6 +71,16 @@ public class LoudnessScanTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
+        var config = Plugin.Instance?.Configuration;
+        if (config is not null && !config.LoudnessEnabled)
+        {
+            _logger.LogInformation("LoudnessScan: disabled in plugin configuration — skipping");
+            progress.Report(100);
+            return;
+        }
+
+        var maxItems = config?.MaxLoudnessItemsPerRun ?? 40;
+
         // IncludeItemTypes must be set in the query — a bare Recursive scan asks the repo to
         // deserialize every BaseItems row, and unknown/orphaned types throw
         // "Cannot deserialize unknown type" before we can filter in-process.
@@ -75,7 +91,7 @@ public class LoudnessScanTask : IScheduledTask
                 IsVirtualItem = false,
             })
             .Where(i => i.NormalizationGain is null && !string.IsNullOrWhiteSpace(i.Path))
-            .Take(MaxItemsPerRun)
+            .Take(maxItems)
             .ToList();
 
         if (candidates.Count == 0)
@@ -85,13 +101,23 @@ public class LoudnessScanTask : IScheduledTask
             return;
         }
 
-        _logger.LogInformation("LoudnessScan: analysing {Count} video(s) (cap {Cap})", candidates.Count, MaxItemsPerRun);
+        _logger.LogInformation("LoudnessScan: analysing {Count} video(s) (cap {Cap})", candidates.Count, maxItems);
 
         var done = 0;
         var ok = 0;
+        var skippedFailed = 0;
         foreach (var item in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (_analysisStore.HasFailed(item.Id, "loudness"))
+            {
+                skippedFailed++;
+                done++;
+                progress.Report(100.0 * done / candidates.Count);
+                continue;
+            }
+
             try
             {
                 var gain = await _probe.MeasureNormalizationGainAsync(item.Path, cancellationToken)
@@ -99,6 +125,7 @@ public class LoudnessScanTask : IScheduledTask
                 if (gain is null)
                 {
                     _logger.LogWarning("LoudnessScan: no measurement for {Name} ({Id})", item.Name, item.Id);
+                    _analysisStore.RecordFailure(item.Id, "loudness", "loudnorm returned no result");
                 }
                 else
                 {
@@ -124,13 +151,22 @@ public class LoudnessScanTask : IScheduledTask
             catch (Exception ex)
             {
                 _logger.LogError(ex, "LoudnessScan: failed for {Name} ({Id})", item.Name, item.Id);
+                _analysisStore.RecordFailure(item.Id, "loudness", ex.Message);
             }
 
             done++;
             progress.Report(100.0 * done / candidates.Count);
         }
 
-        _logger.LogInformation("LoudnessScan: finished — {Ok}/{Total} written", ok, candidates.Count);
+        _logger.LogInformation(
+            "LoudnessScan: finished — {Ok}/{Total} written, skipped {Skipped} previously-failed items",
+            ok,
+            candidates.Count,
+            skippedFailed);
         progress.Report(100);
     }
+
+    /// <summary>Runs automatically after every library scan.</summary>
+    public Task Run(IProgress<double> progress, CancellationToken cancellationToken) =>
+        ExecuteAsync(progress, cancellationToken);
 }

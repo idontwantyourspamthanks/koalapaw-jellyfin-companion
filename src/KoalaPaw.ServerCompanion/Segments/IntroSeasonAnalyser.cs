@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Enums;
+using KoalaPaw.ServerCompanion.Bookkeeping;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaSegments;
@@ -22,6 +23,7 @@ public sealed class IntroSeasonAnalyser
     private readonly PendingSegmentResults _pending;
     private readonly IMediaSegmentManager _segments;
     private readonly ILibraryManager _libraryManager;
+    private readonly AnalysisStore _analysisStore;
     private readonly ILogger<IntroSeasonAnalyser> _logger;
 
     public IntroSeasonAnalyser(
@@ -29,12 +31,14 @@ public sealed class IntroSeasonAnalyser
         PendingSegmentResults pending,
         IMediaSegmentManager segments,
         ILibraryManager libraryManager,
+        AnalysisStore analysisStore,
         ILogger<IntroSeasonAnalyser> logger)
     {
         _probe = probe;
         _pending = pending;
         _segments = segments;
         _libraryManager = libraryManager;
+        _analysisStore = analysisStore;
         _logger = logger;
     }
 
@@ -59,8 +63,21 @@ public sealed class IntroSeasonAnalyser
         foreach (var ep in withPath)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            heads.Add(await _probe.FingerprintHeadAsync(ep.Path, cancellationToken).ConfigureAwait(false));
-            tails.Add(await _probe.FingerprintTailAsync(ep.Path, cancellationToken).ConfigureAwait(false));
+            var head = await _probe.FingerprintHeadAsync(ep.Path, cancellationToken).ConfigureAwait(false);
+            if (head is null)
+            {
+                _analysisStore.RecordFailure(ep.Id, "segments", "head fingerprint failed");
+            }
+
+            heads.Add(head);
+
+            var tail = await _probe.FingerprintTailAsync(ep.Path, cancellationToken).ConfigureAwait(false);
+            if (tail is null)
+            {
+                _analysisStore.RecordFailure(ep.Id, "segments", "tail fingerprint failed");
+            }
+
+            tails.Add(tail);
         }
 
         var intro = IntroCorrelator.GuessIntro(heads);
@@ -71,6 +88,13 @@ public sealed class IntroSeasonAnalyser
             _logger.LogInformation(
                 "SegmentAnalyser: no confident intro/outro for season sample ({Count} episodes)",
                 withPath.Count);
+
+            // Record failures for the sampled episodes so the season isn't retried forever.
+            foreach (var ep in withPath)
+            {
+                _analysisStore.RecordFailure(ep.Id, "segments", "no confident intro/outro correlation");
+            }
+
             return 0;
         }
 

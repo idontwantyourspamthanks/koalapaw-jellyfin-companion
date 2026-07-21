@@ -16,12 +16,13 @@ namespace KoalaPaw.ServerCompanion.Loudness;
 public sealed class LoudnessProbe
 {
     /// <summary>Jellyfin / ReplayGain 2.0 reference (see DtoService).</summary>
-    public const float TargetLufs = -18f;
+    public const float DefaultTargetLufs = -18f;
 
     private static readonly Regex JsonBlock = new(
         @"\{[^{}]*""input_i""[^{}]*\}",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private readonly float _targetLufs;
     private readonly IMediaEncoder _encoder;
     private readonly ILogger<LoudnessProbe> _logger;
 
@@ -29,6 +30,7 @@ public sealed class LoudnessProbe
     {
         _encoder = encoder;
         _logger = logger;
+        _targetLufs = Plugin.Instance?.Configuration.TargetLufs ?? DefaultTargetLufs;
     }
 
     /// <summary>
@@ -45,7 +47,7 @@ public sealed class LoudnessProbe
         }
 
         // Same formula as Emby.Server.Implementations.Dto.DtoService for item.LUFS.
-        return TargetLufs - integrated.Value;
+        return _targetLufs - integrated.Value;
     }
 
     public async Task<float?> MeasureIntegratedLufsAsync(
@@ -62,7 +64,7 @@ public sealed class LoudnessProbe
         // Single-pass loudnorm print: we only need input_i (integrated loudness).
         var args =
             $"-hide_banner -nostats -vn -i \"{path}\" " +
-            $"-af loudnorm=I={TargetLufs.ToString(CultureInfo.InvariantCulture)}:TP=-1.5:LRA=11:print_format=json " +
+            $"-af loudnorm=I={_targetLufs.ToString(CultureInfo.InvariantCulture)}:TP=-1.5:LRA=11:print_format=json " +
             "-f null -";
 
         var stderr = new StringBuilder();

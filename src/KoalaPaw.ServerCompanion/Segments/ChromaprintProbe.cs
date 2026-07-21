@@ -16,15 +16,19 @@ namespace KoalaPaw.ServerCompanion.Segments;
 public sealed class ChromaprintProbe
 {
     /// <summary>
-    /// Head window to fingerprint. Intro detection inspects at most ~155s (IntroCorrelator.MaxIntroSeconds);
-    /// 200s leaves a generous margin while keeping the probe ~4× cheaper than the old 600s window.
+    /// Default head window to fingerprint. Intro detection inspects at most ~155s
+    /// (IntroCorrelator.MaxIntroSeconds); 200s leaves a generous margin while keeping the
+    /// probe ~4× cheaper than the old 600s window.
     /// </summary>
-    public const int HeadSeconds = 200;
-    public const int TailSeconds = 300;
+    public const int DefaultHeadSeconds = 200;
+
+    public const int DefaultTailSeconds = 300;
 
     /// <summary>Approximate seconds covered by one chromaprint raw item.</summary>
     public const double ItemSeconds = 0.1238;
 
+    private readonly int _headSeconds;
+    private readonly int _tailSeconds;
     private readonly IMediaEncoder _encoder;
     private readonly ILogger _logger;
 
@@ -32,20 +36,23 @@ public sealed class ChromaprintProbe
     {
         _encoder = encoder;
         _logger = logger;
+        var config = Plugin.Instance?.Configuration;
+        _headSeconds = config?.FingerprintHeadSeconds ?? DefaultHeadSeconds;
+        _tailSeconds = config?.FingerprintTailSeconds ?? DefaultTailSeconds;
     }
 
     public Task<uint[]?> FingerprintHeadAsync(string path, CancellationToken cancellationToken) =>
         FingerprintAsync(
             path,
-            $"-hide_banner -nostats -vn -t {HeadSeconds.ToString(CultureInfo.InvariantCulture)} -i \"{path}\" " +
+            $"-hide_banner -nostats -vn -t {_headSeconds.ToString(CultureInfo.InvariantCulture)} -i \"{path}\" " +
             "-ac 2 -f chromaprint -fp_format raw pipe:1",
             cancellationToken);
 
-    /// <summary>Last <see cref="TailSeconds"/> of audio (sseof seek).</summary>
+    /// <summary>Last <see cref="_tailSeconds"/> of audio (sseof seek).</summary>
     public Task<uint[]?> FingerprintTailAsync(string path, CancellationToken cancellationToken) =>
         FingerprintAsync(
             path,
-            $"-hide_banner -nostats -vn -sseof -{TailSeconds.ToString(CultureInfo.InvariantCulture)} -i \"{path}\" " +
+            $"-hide_banner -nostats -vn -sseof -{_tailSeconds.ToString(CultureInfo.InvariantCulture)} -i \"{path}\" " +
             "-ac 2 -f chromaprint -fp_format raw pipe:1",
             cancellationToken);
 

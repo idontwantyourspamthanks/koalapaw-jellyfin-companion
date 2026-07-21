@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
+using KoalaPaw.ServerCompanion.Bookkeeping;
 using KoalaPaw.ServerCompanion.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
@@ -18,27 +19,29 @@ namespace KoalaPaw.ServerCompanion.ScheduledTasks;
 
 /// <summary>
 /// Season-grouped intro + credits scan: chromaprint head/tail → correlate → MediaSegments.
-/// Incremental: skips seasons where every episode already has both Intro and Outro.
+/// Incremental: skips seasons where every episode already has both Intro and Outro, or where
+/// all episodes previously failed analysis.
 /// </summary>
-public class SegmentScanTask : IScheduledTask
+public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
 {
-    public const int MaxSeasonsPerRun = 8;
-
     private readonly ILogger<SegmentScanTask> _logger;
     private readonly ILibraryManager _libraryManager;
     private readonly IMediaSegmentManager _segments;
     private readonly IntroSeasonAnalyser _analyser;
+    private readonly AnalysisStore _analysisStore;
 
     public SegmentScanTask(
         ILogger<SegmentScanTask> logger,
         ILibraryManager libraryManager,
         IMediaSegmentManager segments,
-        IntroSeasonAnalyser analyser)
+        IntroSeasonAnalyser analyser,
+        AnalysisStore analysisStore)
     {
         _logger = logger;
         _libraryManager = libraryManager;
         _segments = segments;
         _analyser = analyser;
+        _analysisStore = analysisStore;
     }
 
     public string Name => "KoalaPaw intro & credits scan";
@@ -56,6 +59,10 @@ public class SegmentScanTask : IScheduledTask
         [
             new TaskTriggerInfo
             {
+                Type = TaskTriggerInfoType.StartupTrigger,
+            },
+            new TaskTriggerInfo
+            {
                 Type = TaskTriggerInfoType.DailyTrigger,
                 TimeOfDayTicks = TimeSpan.FromHours(4).Ticks,
             },
@@ -69,6 +76,16 @@ public class SegmentScanTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
+        var config = Plugin.Instance?.Configuration;
+        if (config is not null && !config.SegmentDetectionEnabled)
+        {
+            _logger.LogInformation("SegmentScan: disabled in plugin configuration — skipping");
+            progress.Report(100);
+            return;
+        }
+
+        var maxSeasons = config?.MaxSeasonsPerRun ?? 8;
+
         // IncludeItemTypes in the query — bare Recursive GetItemList deserializes every row and
         // unknown/orphaned types throw before we can OfType<Episode>().
         var episodes = _libraryManager.GetItemList(new InternalItemsQuery
@@ -88,12 +105,20 @@ public class SegmentScanTask : IScheduledTask
             .ToList();
 
         var todo = new List<IGrouping<Guid, Episode>>();
+        var skippedFailed = 0;
         foreach (var season in bySeason)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (todo.Count >= MaxSeasonsPerRun)
+            if (todo.Count >= maxSeasons)
             {
                 break;
+            }
+
+            // Skip seasons where every episode previously failed segment analysis.
+            if (season.All(ep => _analysisStore.HasFailed(ep.Id, "segments")))
+            {
+                skippedFailed++;
+                continue;
             }
 
             var needs = false;
@@ -121,6 +146,11 @@ public class SegmentScanTask : IScheduledTask
             }
         }
 
+        if (skippedFailed > 0)
+        {
+            _logger.LogInformation("SegmentScan: skipped {Count} previously-failed season(s)", skippedFailed);
+        }
+
         if (todo.Count == 0)
         {
             _logger.LogInformation("SegmentScan: nothing to do (no seasons missing Intro/Outro)");
@@ -128,7 +158,7 @@ public class SegmentScanTask : IScheduledTask
             return;
         }
 
-        _logger.LogInformation("SegmentScan: analysing {Count} season(s) (cap {Cap})", todo.Count, MaxSeasonsPerRun);
+        _logger.LogInformation("SegmentScan: analysing {Count} season(s) (cap {Cap})", todo.Count, maxSeasons);
 
         var done = 0;
         var staged = 0;
@@ -156,4 +186,8 @@ public class SegmentScanTask : IScheduledTask
         _logger.LogInformation("SegmentScan: finished — staged segments on {Staged} episode(s)", staged);
         progress.Report(100);
     }
+
+    /// <summary>Runs automatically after every library scan.</summary>
+    public Task Run(IProgress<double> progress, CancellationToken cancellationToken) =>
+        ExecuteAsync(progress, cancellationToken);
 }

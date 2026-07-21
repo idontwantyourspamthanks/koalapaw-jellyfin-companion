@@ -2,31 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using KoalaPaw.ServerCompanion.Bookkeeping;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace KoalaPaw.ServerCompanion.ScheduledTasks;
 
 /// <summary>
-/// Dev proof that the companion loaded: logs once when the task runs.
-/// Safe defaults — weekly, no library work. Replace with real analysers later.
+/// Lightweight health check: logs the plugin version and the current analysis-failure count.
 /// </summary>
 public class HeartbeatTask : IScheduledTask
 {
     private readonly ILogger<HeartbeatTask> _logger;
+    private readonly AnalysisStore _analysisStore;
 
-    public HeartbeatTask(ILogger<HeartbeatTask> logger)
+    public HeartbeatTask(ILogger<HeartbeatTask> logger, AnalysisStore analysisStore)
     {
         _logger = logger;
-        _logger.LogInformation("KoalaPaw Server Companion heartbeat task registered");
+        _analysisStore = analysisStore;
     }
 
-    public string Name => "KoalaPaw companion heartbeat";
+    public string Name => "KoalaPaw health check";
 
     public string Key => "KoalaPawCompanionHeartbeat";
 
     public string Description =>
-        "Logs that the KoalaPaw Server Companion is loaded. Skeleton only — no library analysis yet.";
+        "Logs the KoalaPaw Server Companion version and analysis-failure count.";
 
     public string Category => "KoalaPaw";
 
@@ -46,8 +47,9 @@ public class HeartbeatTask : IScheduledTask
     public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "KoalaPaw Server Companion is alive (version {Version})",
-            typeof(Plugin).Assembly.GetName().Version);
+            "KoalaPaw Server Companion v{Version} — {Failures} tracked analysis failure(s)",
+            typeof(Plugin).Assembly.GetName().Version,
+            _analysisStore.GetFailureCount());
         progress.Report(100);
         return Task.CompletedTask;
     }

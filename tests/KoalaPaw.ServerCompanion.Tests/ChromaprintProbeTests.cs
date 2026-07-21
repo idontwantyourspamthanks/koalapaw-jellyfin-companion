@@ -66,6 +66,6 @@ public class ChromaprintProbeTests
     public void HeadSeconds_coversMaxIntroWindow()
     {
         // The head window must fingerprint at least as far as intro detection ever looks.
-        Assert.True(ChromaprintProbe.HeadSeconds >= IntroCorrelator.MaxIntroSeconds);
+        Assert.True(ChromaprintProbe.DefaultHeadSeconds >= IntroCorrelator.MaxIntroSeconds);
     }
 }

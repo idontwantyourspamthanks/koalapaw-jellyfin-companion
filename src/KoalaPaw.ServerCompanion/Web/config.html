@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>KoalaPaw</title>
+</head>
+<body>
+    <div id="KoalaPawConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="KoalaPawConfigForm">
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">KoalaPaw Server Companion</h2>
+                        <span id="pluginVersion" class="text" style="margin-left: 0.5em;"></span>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Analysis</h3>
+
+                        <label class="checkboxContainer">
+                            <input type="checkbox" is="emby-checkbox" id="loudnessEnabled" />
+                            <span>Enable loudness scanning</span>
+                        </label>
+
+                        <label class="checkboxContainer">
+                            <input type="checkbox" is="emby-checkbox" id="segmentDetectionEnabled" />
+                            <span>Enable intro/credits detection</span>
+                        </label>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Loudness</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel" for="targetLufs">Target LUFS</label>
+                            <input type="number" is="emby-input" id="targetLufs" step="0.5" />
+                            <div class="fieldDescription">ReplayGain 2.0 reference level (default -18).</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel" for="maxLoudnessItemsPerRun">Max items per run</label>
+                            <input type="number" is="emby-input" id="maxLoudnessItemsPerRun" min="1" />
+                            <div class="fieldDescription">Cap per scan run so a huge library doesn't hog the server.</div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Intro / Credits Detection</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel" for="maxSeasonsPerRun">Max seasons per run</label>
+                            <input type="number" is="emby-input" id="maxSeasonsPerRun" min="1" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel" for="fingerprintHeadSeconds">Fingerprint head (seconds)</label>
+                            <input type="number" is="emby-input" id="fingerprintHeadSeconds" min="30" />
+                            <div class="fieldDescription">How much of the episode opening to fingerprint.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel" for="fingerprintTailSeconds">Fingerprint tail (seconds)</label>
+                            <input type="number" is="emby-input" id="fingerprintTailSeconds" min="30" />
+                            <div class="fieldDescription">How much of the episode ending to fingerprint.</div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Failure Log</h3>
+                        <p>Tracked analysis failures: <strong id="failureCount">?</strong></p>
+                        <button is="emby-button" type="button" id="clearFailures" class="raised button-submit block">
+                            <span>Clear failure log</span>
+                        </button>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = 'cea40e65-c04f-4854-b6c4-3428360087fe';
+
+            function loadConfig(page) {
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    page.querySelector('#loudnessEnabled').checked = config.LoudnessEnabled;
+                    page.querySelector('#segmentDetectionEnabled').checked = config.SegmentDetectionEnabled;
+                    page.querySelector('#targetLufs').value = config.TargetLufs;
+                    page.querySelector('#maxLoudnessItemsPerRun').value = config.MaxLoudnessItemsPerRun;
+                    page.querySelector('#maxSeasonsPerRun').value = config.MaxSeasonsPerRun;
+                    page.querySelector('#fingerprintHeadSeconds').value = config.FingerprintHeadSeconds;
+                    page.querySelector('#fingerprintTailSeconds').value = config.FingerprintTailSeconds;
+                });
+            }
+
+            function loadFailureCount(page) {
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('KoalaPaw/Failures'),
+                    dataType: 'json'
+                }).then(function (result) {
+                    page.querySelector('#failureCount').textContent = result.count;
+                }).catch(function () {
+                    page.querySelector('#failureCount').textContent = '?';
+                });
+            }
+
+            function loadVersion(page) {
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Plugins/' + pluginId),
+                    dataType: 'json'
+                }).then(function (plugin) {
+                    page.querySelector('#pluginVersion').textContent = 'v' + plugin.Version;
+                }).catch(function () {
+                    page.querySelector('#pluginVersion').textContent = '';
+                });
+            }
+
+            function saveConfig(page) {
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    config.LoudnessEnabled = page.querySelector('#loudnessEnabled').checked;
+                    config.SegmentDetectionEnabled = page.querySelector('#segmentDetectionEnabled').checked;
+                    config.TargetLufs = parseFloat(page.querySelector('#targetLufs').value);
+                    config.MaxLoudnessItemsPerRun = parseInt(page.querySelector('#maxLoudnessItemsPerRun').value, 10);
+                    config.MaxSeasonsPerRun = parseInt(page.querySelector('#maxSeasonsPerRun').value, 10);
+                    config.FingerprintHeadSeconds = parseInt(page.querySelector('#fingerprintHeadSeconds').value, 10);
+                    config.FingerprintTailSeconds = parseInt(page.querySelector('#fingerprintTailSeconds').value, 10);
+
+                    ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+            }
+
+            function clearFailures(page) {
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('KoalaPaw/Failures/Clear')
+                }).then(function () {
+                    loadFailureCount(page);
+                    Dashboard.processPluginConfigurationUpdateResult();
+                });
+            }
+
+            document.querySelector('#KoalaPawConfigPage')
+                .addEventListener('pageshow', function () {
+                    var page = this;
+                    loadConfig(page);
+                    loadFailureCount(page);
+                    loadVersion(page);
+                });
+
+            document.querySelector('#KoalaPawConfigForm')
+                .addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    saveConfig(document.querySelector('#KoalaPawConfigPage'));
+                    return false;
+                });
+
+            document.querySelector('#clearFailures')
+                .addEventListener('click', function () {
+                    clearFailures(document.querySelector('#KoalaPawConfigPage'));
+                });
+        })();
+    </script>
+</body>
+</html>

@@ -21,7 +21,7 @@ public class LoudnessProbeParseTests
         var lufs = LoudnessProbe.ParseInputIntegrated(stderr);
         Assert.Equal(-23.49f, lufs);
 
-        var gain = LoudnessProbe.TargetLufs - lufs!.Value;
+        var gain = LoudnessProbe.DefaultTargetLufs - lufs!.Value;
         Assert.Equal(5.49f, gain, precision: 2);
     }
 
