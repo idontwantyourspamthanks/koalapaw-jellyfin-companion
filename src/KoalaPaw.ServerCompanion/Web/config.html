@@ -139,8 +139,7 @@
                         label.querySelector('.secondaryText').textContent = '(' + f.analyser + ', ' + when + ')';
                         label.querySelector('.fieldDescription').textContent = f.reason;
 
-                        var btn = document.createElement('button');
-                        btn.setAttribute('is', 'emby-button');
+                        var btn = document.createElement('button', { is: 'emby-button' });
                         btn.type = 'button';
                         btn.className = 'raised block';
                         btn.innerHTML = '<span>Retry</span>';
@@ -165,16 +164,16 @@
                     loadFailures(page);
                     loadFailureCount(page);
                     Dashboard.processPluginConfigurationUpdateResult();
-                });
+                }).catch(function () {});
             }
 
-            function scanNow(page, kind) {
+            function scanNow(kind) {
                 ApiClient.ajax({
                     type: 'POST',
                     url: ApiClient.getUrl('KoalaPaw/Scan/' + kind)
                 }).then(function () {
                     Dashboard.processPluginConfigurationUpdateResult();
-                });
+                }).catch(function () {});
             }
 
             function loadVersion(page) {
@@ -210,6 +209,7 @@
                     type: 'POST',
                     url: ApiClient.getUrl('KoalaPaw/Failures/Clear')
                 }).then(function () {
+                    loadFailures(page);
                     loadFailureCount(page);
                     Dashboard.processPluginConfigurationUpdateResult();
                 });
@@ -238,12 +238,12 @@
 
             document.querySelector('#scanLoudness')
                 .addEventListener('click', function () {
-                    scanNow(document.querySelector('#KoalaPawConfigPage'), 'Loudness');
+                    scanNow('Loudness');
                 });
 
             document.querySelector('#scanSegments')
                 .addEventListener('click', function () {
-                    scanNow(document.querySelector('#KoalaPawConfigPage'), 'Segments');
+                    scanNow('Segments');
                 });
         })();
     </script>
