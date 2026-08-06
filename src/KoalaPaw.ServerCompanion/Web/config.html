@@ -27,6 +27,16 @@
                             <input type="checkbox" is="emby-checkbox" id="segmentDetectionEnabled" />
                             <span>Enable intro/credits detection</span>
                         </label>
+
+                        <div style="margin-top: 1em; display: flex; gap: 0.5em;">
+                            <button is="emby-button" type="button" id="scanLoudness" class="raised block">
+                                <span>Scan loudness now</span>
+                            </button>
+                            <button is="emby-button" type="button" id="scanSegments" class="raised block">
+                                <span>Scan intros/credits now</span>
+                            </button>
+                        </div>
+                        <div class="fieldDescription">Queues the incremental scan: per-run batch caps apply, and items in the failure log are skipped.</div>
                     </div>
 
                     <div class="verticalSection">
@@ -64,6 +74,7 @@
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Failure Log</h3>
                         <p>Tracked analysis failures: <strong id="failureCount">?</strong></p>
+                        <div id="failureList"></div>
                         <button is="emby-button" type="button" id="clearFailures" class="raised button-submit block">
                             <span>Clear failure log</span>
                         </button>
@@ -104,6 +115,65 @@
                     page.querySelector('#failureCount').textContent = result.count;
                 }).catch(function () {
                     page.querySelector('#failureCount').textContent = '?';
+                });
+            }
+
+            function loadFailures(page) {
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('KoalaPaw/Failures/List'),
+                    dataType: 'json'
+                }).then(function (failures) {
+                    var list = page.querySelector('#failureList');
+                    list.innerHTML = '';
+                    failures.forEach(function (f) {
+                        var row = document.createElement('div');
+                        row.style.cssText = 'display:flex;align-items:center;gap:0.75em;margin:0.4em 0;';
+
+                        var label = document.createElement('div');
+                        label.style.flex = '1';
+                        var name = f.name || 'Deleted item';
+                        var when = new Date(f.timestamp).toLocaleString();
+                        label.innerHTML = '<strong></strong> <span class="secondaryText"></span><br><span class="fieldDescription"></span>';
+                        label.querySelector('strong').textContent = name;
+                        label.querySelector('.secondaryText').textContent = '(' + f.analyser + ', ' + when + ')';
+                        label.querySelector('.fieldDescription').textContent = f.reason;
+
+                        var btn = document.createElement('button');
+                        btn.setAttribute('is', 'emby-button');
+                        btn.type = 'button';
+                        btn.className = 'raised block';
+                        btn.innerHTML = '<span>Retry</span>';
+                        btn.addEventListener('click', function () {
+                            retryFailure(page, f.itemId, f.analyser);
+                        });
+
+                        row.appendChild(label);
+                        row.appendChild(btn);
+                        list.appendChild(row);
+                    });
+                }).catch(function () {
+                    page.querySelector('#failureList').innerHTML = '';
+                });
+            }
+
+            function retryFailure(page, itemId, analyser) {
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('KoalaPaw/Failures/' + itemId + '/' + analyser + '/Retry')
+                }).then(function () {
+                    loadFailures(page);
+                    loadFailureCount(page);
+                    Dashboard.processPluginConfigurationUpdateResult();
+                });
+            }
+
+            function scanNow(page, kind) {
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('KoalaPaw/Scan/' + kind)
+                }).then(function () {
+                    Dashboard.processPluginConfigurationUpdateResult();
                 });
             }
 
@@ -150,6 +220,7 @@
                     var page = this;
                     loadConfig(page);
                     loadFailureCount(page);
+                    loadFailures(page);
                     loadVersion(page);
                 });
 
@@ -163,6 +234,16 @@
             document.querySelector('#clearFailures')
                 .addEventListener('click', function () {
                     clearFailures(document.querySelector('#KoalaPawConfigPage'));
+                });
+
+            document.querySelector('#scanLoudness')
+                .addEventListener('click', function () {
+                    scanNow(document.querySelector('#KoalaPawConfigPage'), 'Loudness');
+                });
+
+            document.querySelector('#scanSegments')
+                .addEventListener('click', function () {
+                    scanNow(document.querySelector('#KoalaPawConfigPage'), 'Segments');
                 });
         })();
     </script>
