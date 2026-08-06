@@ -160,4 +160,68 @@ public class AnalysisStoreTests : IDisposable
 
         Assert.Equal(8, store.GetFailureCount());
     }
+
+    [Fact]
+    public void GetFailures_returnsAllRecordsNewestFirst()
+    {
+        using var store = CreateStore();
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+
+        store.RecordFailure(a, "loudness", "first");
+        store.RecordFailure(b, "segments", "second");
+
+        var failures = store.GetFailures();
+
+        Assert.Equal(2, failures.Count);
+        Assert.Equal(b, failures[0].ItemId); // recorded later → newer timestamp → first
+        Assert.Equal(a, failures[1].ItemId);
+        Assert.Equal("segments", failures[0].Analyser);
+        Assert.Equal("second", failures[0].Reason);
+    }
+
+    [Fact]
+    public void RemoveFailure_removesOnlyTheMatchingRecord()
+    {
+        using var store = CreateStore();
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        store.RecordFailure(a, "loudness", "r1");
+        store.RecordFailure(a, "segments", "r2");
+        store.RecordFailure(b, "loudness", "r3");
+
+        Assert.True(store.RemoveFailure(a, "loudness"));
+
+        Assert.False(store.HasFailed(a, "loudness"));
+        Assert.True(store.HasFailed(a, "segments"), "same item, other analyser must survive");
+        Assert.True(store.HasFailed(b, "loudness"), "other item must survive");
+        Assert.Equal(2, store.GetFailureCount());
+    }
+
+    [Fact]
+    public void RemoveFailure_missingRecord_returnsFalse()
+    {
+        using var store = CreateStore();
+
+        Assert.False(store.RemoveFailure(Guid.NewGuid(), "loudness"));
+    }
+
+    [Fact]
+    public void RemoveFailure_persistsAcrossNewInstance()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        using (var store = CreateStore())
+        {
+            store.RecordFailure(a, "loudness", "r1");
+            store.RecordFailure(b, "loudness", "r2");
+            store.RemoveFailure(a, "loudness");
+        } // Dispose flushes
+
+        using (var store = CreateStore())
+        {
+            Assert.False(store.HasFailed(a, "loudness"));
+            Assert.True(store.HasFailed(b, "loudness"));
+        }
+    }
 }

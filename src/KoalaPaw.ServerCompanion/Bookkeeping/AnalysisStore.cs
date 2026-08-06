@@ -62,6 +62,23 @@ public sealed class AnalysisStore : IDisposable
         Flush();
     }
 
+    /// <summary>Snapshot of all recorded failures, newest first.</summary>
+    public IReadOnlyList<FailureRecord> GetFailures() =>
+        _records.Values.OrderByDescending(r => r.Timestamp).ToList();
+
+    /// <summary>Remove one failure record so the item is eligible again on the next scan run.</summary>
+    public bool RemoveFailure(Guid itemId, string analyser)
+    {
+        if (!_records.TryRemove((itemId, analyser), out _))
+        {
+            return false;
+        }
+
+        _dirty = true;
+        Flush();
+        return true;
+    }
+
     /// <summary>Number of distinct (item, analyser) failure records.</summary>
     public int GetFailureCount() => _records.Count;
 
@@ -131,7 +148,7 @@ public sealed class AnalysisStore : IDisposable
         }
     }
 
-    internal sealed class FailureRecord
+    public sealed class FailureRecord
     {
         public Guid ItemId { get; set; }
 
