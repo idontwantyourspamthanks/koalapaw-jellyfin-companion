@@ -1,6 +1,6 @@
 name: "KoalaPaw Server Companion"
 guid: "cea40e65-c04f-4854-b6c4-3428360087fe"
-version: "0.0.8.0"
+version: "0.0.9.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Skip intros and even out video loudness for KoalaPaw (and any Jellyfin client)."
@@ -13,6 +13,7 @@ owner: "koalapaw"
 artifacts:
   - "KoalaPaw.ServerCompanion.dll"
 changelog: >
+  0.0.9.0 — Dashboard: per-failure retry (clears the record and queues the scan), loudness/segments "scan now" buttons, failure list with item names; API endpoints now require admin elevation.
   0.0.8.0 — Failure tracking (AnalysisStore) so undetectable items aren't retried forever; library-scan and startup triggers; plugin configuration (toggles, LUFS target, batch caps, fingerprint windows); dashboard web page with settings and failure log; HeartbeatTask repurposed as health check.
   0.0.7.0 — Fix loudnorm stderr race, segment staging leak, DI registration, changelog packaging; reduce chromaprint head window 600→200s; TreatWarningsAsErrors; new tests.
   0.0.6.0 — Credits/Outro: chromaprint tail correlation; stage Intro+Outro together; drop spike-2 fixture.
