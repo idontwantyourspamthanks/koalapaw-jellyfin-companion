@@ -112,7 +112,7 @@
                     url: ApiClient.getUrl('KoalaPaw/Failures'),
                     dataType: 'json'
                 }).then(function (result) {
-                    page.querySelector('#failureCount').textContent = result.count;
+                    page.querySelector('#failureCount').textContent = result.Count;
                 }).catch(function () {
                     page.querySelector('#failureCount').textContent = '?';
                 });
@@ -132,19 +132,19 @@
 
                         var label = document.createElement('div');
                         label.style.flex = '1';
-                        var name = f.name || 'Deleted item';
-                        var when = new Date(f.timestamp).toLocaleString();
+                        var name = f.Name || 'Deleted item';
+                        var when = new Date(f.Timestamp).toLocaleString();
                         label.innerHTML = '<strong></strong> <span class="secondaryText"></span><br><span class="fieldDescription"></span>';
                         label.querySelector('strong').textContent = name;
-                        label.querySelector('.secondaryText').textContent = '(' + f.analyser + ', ' + when + ')';
-                        label.querySelector('.fieldDescription').textContent = f.reason;
+                        label.querySelector('.secondaryText').textContent = '(' + f.Analyser + ', ' + when + ')';
+                        label.querySelector('.fieldDescription').textContent = f.Reason;
 
                         var btn = document.createElement('button', { is: 'emby-button' });
                         btn.type = 'button';
                         btn.className = 'raised block';
                         btn.innerHTML = '<span>Retry</span>';
                         btn.addEventListener('click', function () {
-                            retryFailure(page, f.itemId, f.analyser);
+                            retryFailure(page, f.ItemId, f.Analyser);
                         });
 
                         row.appendChild(label);
