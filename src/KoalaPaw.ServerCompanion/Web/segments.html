@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>KoalaPaw Intro &amp; Outro</title>
+</head>
+<body>
+    <div id="KoalaPawSegmentsPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-button">
+        <div data-role="content">
+            <div class="content-primary">
+                <div class="sectionTitleContainer flex align-items-center">
+                    <h2 class="sectionTitle">KoalaPaw Intro &amp; Outro</h2>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Scan</h3>
+                    <div style="display:flex;align-items:center;gap:0.75em;">
+                        <button is="emby-button" type="button" id="scanSegmentsNow" class="raised block">
+                            <span>Scan now</span>
+                        </button>
+                    </div>
+                    <div id="progressBar" style="display:none;margin-top:0.8em;">
+                        <div style="background:rgba(128,128,128,0.3);border-radius:0.35em;height:0.5em;overflow:hidden;">
+                            <div id="progressFill" style="background:#0b8b47;height:100%;width:0%;"></div>
+                        </div>
+                    </div>
+                    <div id="progressStatus" class="fieldDescription" style="margin-top:0.5em;">No scan in progress.</div>
+                    <div id="scanSummary" class="fieldDescription" style="margin-top:0.5em;"></div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Libraries</h3>
+                    <div id="tree"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var page = document.querySelector('#KoalaPawSegmentsPage');
+
+            var TASK_KEY = 'KoalaPawIntroSegmentScan';
+            var POLL_INTERVAL_MS = 2000;
+            var MAX_IDLE_POLLS = 30;
+
+            var pollTimer = null;
+            var sawRunning = false;
+            var idlePolls = 0;
+
+            function ajaxGet(url) {
+                return ApiClient.ajax({ type: 'GET', url: url, dataType: 'json' });
+            }
+
+            function ajaxPost(url) {
+                return ApiClient.ajax({ type: 'POST', url: url });
+            }
+
+            function formatSeconds(seconds) {
+                if (seconds == null || isNaN(seconds) || seconds < 0) {
+                    return null;
+                }
+                var total = Math.round(seconds);
+                var m = Math.floor(total / 60);
+                var s = total % 60;
+                return m + ':' + (s < 10 ? '0' : '') + s;
+            }
+
+            function introLabel(episode) {
+                if (!episode.intro) {
+                    return '\u2014';
+                }
+                var end = formatSeconds(episode.intro.endSeconds);
+                return end == null ? '\u2014' : '0:00\u2013' + end;
+            }
+
+            function outroLabel(episode) {
+                if (!episode.outro) {
+                    return '\u2014';
+                }
+                var start = formatSeconds(episode.outro.startSeconds);
+                return start == null ? '\u2014' : start + '\u2013end';
+            }
+
+            function confidenceBadge(value, textLabel, titleLabel) {
+                if (value == null) {
+                    return null;
+                }
+                var color = value >= 0.85 ? '#1a9850' : (value >= 0.70 ? '#d9822b' : '#c0392b');
+                var span = document.createElement('span');
+                span.style.cssText = 'display:inline-block;padding:0.1em 0.55em;border-radius:1em;color:#fff;font-size:0.85em;white-space:nowrap;';
+                span.style.backgroundColor = color;
+                span.textContent = value.toFixed(2) + ' ' + textLabel;
+                span.title = titleLabel;
+                return span;
+            }
+
+            function badgePart(count, glyph, color, label) {
+                var span = document.createElement('span');
+                span.style.color = color;
+                span.style.fontWeight = '600';
+                span.style.whiteSpace = 'nowrap';
+                span.textContent = count + ' ' + glyph;
+                span.title = label;
+                return span;
+            }
+
+            function countBadges(item) {
+                var parts = [];
+                if (item.detected) {
+                    parts.push(badgePart(item.detected, '\u2713', '#1a9850', 'detected'));
+                }
+                if (item.partial) {
+                    parts.push(badgePart(item.partial, '~', '#d9822b', 'partial'));
+                }
+                if (item.failed) {
+                    parts.push(badgePart(item.failed, '\u2717', '#c0392b', 'failed'));
+                }
+                var container = document.createElement('span');
+                container.style.cssText = 'display:inline-flex;align-items:center;gap:0.5em;color:#666;font-size:0.9em;white-space:nowrap;';
+                parts.forEach(function (part, i) {
+                    if (i > 0) {
+                        container.appendChild(document.createTextNode('\u00B7'));
+                    }
+                    container.appendChild(part);
+                });
+                if (!parts.length) {
+                    var none = document.createElement('span');
+                    none.style.color = '#999';
+                    none.textContent = item.episodes ? 'not scanned' : '0 episodes';
+                    container.appendChild(none);
+                }
+                return container;
+            }
+
+            function stateIcon(state, failureReason) {
+                var icon = '\u2014';
+                var color = '#999';
+                var title = 'Not scanned';
+                switch (state) {
+                    case 'detected':
+                        icon = '\u2713';
+                        color = '#1a9850';
+                        title = 'Detected \u2014 intro and outro in place';
+                        break;
+                    case 'partial':
+                        icon = '~';
+                        color = '#d9822b';
+                        title = 'Partial \u2014 only one of intro/outro in place';
+                        break;
+                    case 'failed':
+                        icon = '\u2717';
+                        color = '#c0392b';
+                        title = 'Failed \u2014 ' + (failureReason || 'no reason recorded');
+                        break;
+                    default:
+                        break;
+                }
+                var span = document.createElement('span');
+                span.style.cssText = 'font-weight:700;font-size:1.05em;';
+                span.style.color = color;
+                span.textContent = icon;
+                span.title = title;
+                return span;
+            }
+
+            function outcomeLabel(outcome) {
+                switch (outcome) {
+                    case 'Detected': return 'Detected';
+                    case 'Partial': return 'Partial';
+                    case 'NoCorrelation': return 'No correlation';
+                    case 'FingerprintFailures': return 'Fingerprint failures';
+                    case 'Error': return 'Error';
+                    default: return outcome || 'Unknown';
+                }
+            }
+
+            function outcomeColor(outcome) {
+                switch (outcome) {
+                    case 'Detected': return '#1a9850';
+                    case 'Partial': return '#d9822b';
+                    case 'FingerprintFailures':
+                    case 'Error': return '#c0392b';
+                    default: return '#888';
+                }
+            }
+
+            function makeNode(name, badges) {
+                var row = document.createElement('div');
+                row.style.cssText = 'border-bottom:1px solid rgba(127,127,127,0.15);';
+
+                var header = document.createElement('div');
+                header.style.cssText = 'display:flex;align-items:center;gap:0.6em;padding:0.5em 0;cursor:pointer;';
+
+                var caret = document.createElement('span');
+                caret.style.cssText = 'width:1em;color:#888;text-align:center;';
+                caret.textContent = '\u25B8';
+
+                var nameEl = document.createElement('span');
+                nameEl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                nameEl.textContent = name;
+
+                header.appendChild(caret);
+                header.appendChild(nameEl);
+                badges.forEach(function (badge) {
+                    if (badge) {
+                        header.appendChild(badge);
+                    }
+                });
+
+                var body = document.createElement('div');
+                body.style.cssText = 'display:none;padding-left:1.5em;padding-bottom:0.4em;';
+
+                row.appendChild(header);
+                row.appendChild(body);
+
+                return {
+                    row: row,
+                    header: header,
+                    caret: caret,
+                    body: body,
+                    expanded: false,
+                    loaded: false
+                };
+            }
+
+            function toggleNode(node, loader) {
+                if (!node.expanded) {
+                    node.expanded = true;
+                    node.caret.textContent = '\u25BE';
+                    if (!node.loaded) {
+                        node.loaded = true;
+                        node.body.textContent = 'Loading\u2026';
+                        loader(node.body);
+                    }
+                    node.body.style.display = 'block';
+                } else {
+                    node.expanded = false;
+                    node.caret.textContent = '\u25B8';
+                    node.body.style.display = 'none';
+                }
+            }
+
+            function attachToggle(node, loader) {
+                node.header.addEventListener('click', function () {
+                    toggleNode(node, loader);
+                });
+            }
+
+            function loadLibraries(container) {
+                container.textContent = 'Loading\u2026';
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Overview')).then(function (data) {
+                    container.textContent = '';
+                    var libraries = data.libraries || [];
+                    if (!libraries.length) {
+                        container.textContent = 'No libraries with episodes.';
+                        return;
+                    }
+                    libraries.forEach(function (library) {
+                        var node = makeNode(library.name, [countBadges(library)]);
+                        attachToggle(node, function (body) {
+                            loadSeries(body, library.libraryId);
+                        });
+                        container.appendChild(node.row);
+                    });
+                }).catch(function () {
+                    container.textContent = 'Failed to load libraries.';
+                });
+            }
+
+            function loadSeries(body, libraryId) {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Series', { libraryId: libraryId })).then(function (seriesList) {
+                    body.textContent = '';
+                    if (!seriesList.length) {
+                        body.textContent = 'No series.';
+                        return;
+                    }
+                    seriesList.forEach(function (series) {
+                        var node = makeNode(series.name, [countBadges(series)]);
+                        attachToggle(node, function (b) {
+                            loadSeasons(b, series.seriesId);
+                        });
+                        body.appendChild(node.row);
+                    });
+                }).catch(function () {
+                    body.textContent = 'Failed to load series.';
+                });
+            }
+
+            function loadSeasons(body, seriesId) {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Seasons', { seriesId: seriesId })).then(function (seasonList) {
+                    body.textContent = '';
+                    if (!seasonList.length) {
+                        body.textContent = 'No seasons.';
+                        return;
+                    }
+                    seasonList.forEach(function (season) {
+                        var badges = [countBadges(season)];
+                        if (season.scan) {
+                            badges.push(confidenceBadge(season.scan.introConfidence, 'season', 'Season intro confidence'));
+                            badges.push(confidenceBadge(season.scan.outroConfidence, 'season', 'Season outro confidence'));
+                        }
+                        badges.push(makeRescanButton(season.seasonId));
+                        var node = makeNode(season.name, badges);
+                        attachToggle(node, function (b) {
+                            loadSeasonDetail(b, season);
+                        });
+                        body.appendChild(node.row);
+                    });
+                }).catch(function () {
+                    body.textContent = 'Failed to load seasons.';
+                });
+            }
+
+            function makeRescanButton(seasonId) {
+                var btn = document.createElement('button', { is: 'emby-button' });
+                btn.type = 'button';
+                btn.className = 'raised';
+                btn.style.cssText = 'margin:0;min-height:0;padding:0.25em 0.9em;';
+                btn.innerHTML = '<span>Rescan this season</span>';
+                btn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    rescanSeason(seasonId);
+                });
+                return btn;
+            }
+
+            function rescanSeason(seasonId) {
+                ajaxPost(ApiClient.getUrl('KoalaPaw/Segments/Seasons/' + seasonId + '/Rescan')).then(function () {
+                    startWatching('Rescan queued \u2014 watching progress\u2026');
+                    Dashboard.processPluginConfigurationUpdateResult();
+                }).catch(function () {
+                    setProgress(null, 'Failed to queue the season rescan.');
+                });
+            }
+
+            function seasonDetail(season) {
+                var block = document.createElement('div');
+                block.style.cssText = 'padding:0.5em 0 0.4em 0.25em;';
+                var scan = season.scan;
+                if (!scan) {
+                    var none = document.createElement('div');
+                    none.className = 'fieldDescription';
+                    none.textContent = 'Not scanned yet \u2014 run a scan to analyse this season.';
+                    block.appendChild(none);
+                    return block;
+                }
+
+                var outcome = document.createElement('div');
+                outcome.style.cssText = 'font-weight:600;';
+                outcome.style.color = outcomeColor(scan.outcome);
+                outcome.textContent = 'Outcome: ' + outcomeLabel(scan.outcome);
+                block.appendChild(outcome);
+
+                var parts = [];
+                if (scan.introEndSeconds != null) {
+                    var introText = 'Intro ends at ' + formatSeconds(scan.introEndSeconds);
+                    if (scan.introConfidence != null) {
+                        introText += ' \u00B7 confidence ' + scan.introConfidence.toFixed(2);
+                    }
+                    parts.push(introText);
+                }
+                if (scan.outroLengthSeconds != null) {
+                    var outroText = 'Outro length ' + formatSeconds(scan.outroLengthSeconds);
+                    if (scan.outroConfidence != null) {
+                        outroText += ' \u00B7 confidence ' + scan.outroConfidence.toFixed(2);
+                    }
+                    parts.push(outroText);
+                }
+                if (scan.episodesSampled > 0) {
+                    parts.push(scan.episodesSampled + ' episodes sampled');
+                }
+                if (scan.finishedUtc) {
+                    parts.push('finished ' + new Date(scan.finishedUtc).toLocaleString());
+                }
+                if (parts.length) {
+                    var line = document.createElement('div');
+                    line.className = 'fieldDescription';
+                    line.textContent = parts.join(' \u00B7 ');
+                    block.appendChild(line);
+                }
+                return block;
+            }
+
+            function loadSeasonDetail(body, season) {
+                body.textContent = '';
+                body.appendChild(seasonDetail(season));
+                var episodesHost = document.createElement('div');
+                body.appendChild(episodesHost);
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Episodes', { seasonId: season.seasonId })).then(function (episodes) {
+                    if (!episodes.length) {
+                        episodesHost.textContent = 'No episodes.';
+                        return;
+                    }
+                    episodesHost.appendChild(episodeTable(episodes));
+                }).catch(function () {
+                    episodesHost.textContent = 'Failed to load episodes.';
+                });
+            }
+
+            function cell(text) {
+                var td = document.createElement('td');
+                td.textContent = text;
+                return td;
+            }
+
+            function episodeTable(episodes) {
+                var table = document.createElement('table');
+                table.className = 'table';
+                table.style.cssText = 'width:100%;margin-top:0.6em;';
+
+                var thead = document.createElement('thead');
+                var headRow = document.createElement('tr');
+                ['#', 'Title', 'Intro', 'Outro', 'Confidence', 'State'].forEach(function (heading) {
+                    var th = document.createElement('th');
+                    th.textContent = heading;
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+
+                var tbody = document.createElement('tbody');
+                episodes.forEach(function (episode) {
+                    var row = document.createElement('tr');
+                    if (episode.state === 'failed') {
+                        row.title = episode.failureReason || 'No reason recorded';
+                    }
+                    row.appendChild(cell(episode.indexNumber != null ? String(episode.indexNumber) : '\u2014'));
+                    row.appendChild(cell(episode.name || '\u2014'));
+
+                    var introCell = cell(introLabel(episode));
+                    introCell.style.cssText = 'white-space:nowrap;';
+                    row.appendChild(introCell);
+
+                    var outroCell = cell(outroLabel(episode));
+                    outroCell.style.cssText = 'white-space:nowrap;';
+                    row.appendChild(outroCell);
+
+                    var confidenceCell = document.createElement('td');
+                    var introBadge = confidenceBadge(episode.introConfidence, 'season', 'Season intro confidence');
+                    var outroBadge = confidenceBadge(episode.outroConfidence, 'season', 'Season outro confidence');
+                    if (introBadge) {
+                        confidenceCell.appendChild(introBadge);
+                    }
+                    if (outroBadge) {
+                        if (introBadge) {
+                            confidenceCell.appendChild(document.createTextNode(' '));
+                        }
+                        confidenceCell.appendChild(outroBadge);
+                    }
+                    if (!introBadge && !outroBadge) {
+                        confidenceCell.textContent = '\u2014';
+                    }
+                    row.appendChild(confidenceCell);
+
+                    var stateCell = document.createElement('td');
+                    stateCell.appendChild(stateIcon(episode.state, episode.failureReason));
+                    row.appendChild(stateCell);
+
+                    tbody.appendChild(row);
+                });
+                table.appendChild(tbody);
+                return table;
+            }
+
+            function loadSummary() {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Report')).then(function (report) {
+                    var el = page.querySelector('#scanSummary');
+                    if (!report.episodesScanned) {
+                        el.textContent = 'No scan completed yet.';
+                        return;
+                    }
+                    var parts = [report.episodesScanned + ' episodes', report.introsFound + ' intros', report.outrosFound + ' outros'];
+                    if (report.introConfidence != null) {
+                        parts.push('intro confidence ' + report.introConfidence.toFixed(2));
+                    }
+                    if (report.outroConfidence != null) {
+                        parts.push('outro confidence ' + report.outroConfidence.toFixed(2));
+                    }
+                    el.textContent = 'Last scan \u2014 ' + parts.join(', ') + '.';
+                }).catch(function () {
+                    page.querySelector('#scanSummary').textContent = 'Unable to load the scan summary.';
+                });
+            }
+
+            function loadTree() {
+                loadLibraries(page.querySelector('#tree'));
+            }
+
+            function refreshAll() {
+                loadSummary();
+                loadTree();
+            }
+
+            function setProgress(percent, status) {
+                page.querySelector('#progressStatus').textContent = status;
+                var bar = page.querySelector('#progressBar');
+                if (percent == null) {
+                    bar.style.display = 'none';
+                    page.querySelector('#progressFill').style.width = '0%';
+                } else {
+                    bar.style.display = 'block';
+                    page.querySelector('#progressFill').style.width = percent + '%';
+                }
+            }
+
+            function stopProgressPolling() {
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+            }
+
+            function findTask(tasks) {
+                if (!tasks) {
+                    return null;
+                }
+                for (var i = 0; i < tasks.length; i++) {
+                    if (tasks[i].Key === TASK_KEY) {
+                        return tasks[i];
+                    }
+                }
+                return null;
+            }
+
+            function updateProgress(task) {
+                var percent = task.CurrentProgressPercentage;
+                if (percent == null) {
+                    percent = 0;
+                }
+                setProgress(percent, 'Scan in progress \u2014 ' + Math.round(percent) + '%');
+            }
+
+            function startPollingLoop() {
+                stopProgressPolling();
+                pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+            }
+
+            function startWatching(message) {
+                stopProgressPolling();
+                sawRunning = false;
+                idlePolls = 0;
+                setProgress(null, message);
+                startPollingLoop();
+                pollOnce();
+            }
+
+            function pollOnce() {
+                ajaxGet(ApiClient.getUrl('ScheduledTasks')).then(function (tasks) {
+                    var task = findTask(tasks);
+                    if (task && task.State === 'Running') {
+                        sawRunning = true;
+                        idlePolls = 0;
+                        updateProgress(task);
+                    } else if (sawRunning) {
+                        stopProgressPolling();
+                        sawRunning = false;
+                        idlePolls = 0;
+                        setProgress(null, 'Scan finished.');
+                        refreshAll();
+                    } else {
+                        idlePolls++;
+                        if (idlePolls >= MAX_IDLE_POLLS) {
+                            stopProgressPolling();
+                            sawRunning = false;
+                            idlePolls = 0;
+                            setProgress(null, 'No scan progress observed.');
+                            refreshAll();
+                        }
+                    }
+                }).catch(function () {
+                    idlePolls++;
+                    if (idlePolls >= MAX_IDLE_POLLS) {
+                        stopProgressPolling();
+                        sawRunning = false;
+                        idlePolls = 0;
+                        setProgress(null, 'Lost connection while watching the scan.');
+                        refreshAll();
+                    } else {
+                        setProgress(null, 'Scan in progress \u2014 status update failed; retrying\u2026');
+                    }
+                });
+            }
+
+            // If a scan is already running when the page opens, pick up its progress.
+            function checkRunningTask() {
+                ajaxGet(ApiClient.getUrl('ScheduledTasks')).then(function (tasks) {
+                    var task = findTask(tasks);
+                    if (task && task.State === 'Running') {
+                        sawRunning = true;
+                        startPollingLoop();
+                        updateProgress(task);
+                    } else {
+                        setProgress(null, 'No scan in progress.');
+                    }
+                }).catch(function () {});
+            }
+
+            page.addEventListener('pageshow', function () {
+                stopProgressPolling();
+                sawRunning = false;
+                idlePolls = 0;
+                loadSummary();
+                loadTree();
+                checkRunningTask();
+            });
+
+            page.querySelector('#scanSegmentsNow').addEventListener('click', function () {
+                ajaxPost(ApiClient.getUrl('KoalaPaw/Scan/Segments')).then(function () {
+                    startWatching('Scan queued \u2014 waiting for it to start\u2026');
+                    Dashboard.processPluginConfigurationUpdateResult();
+                }).catch(function () {
+                    setProgress(null, 'Failed to queue the scan.');
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

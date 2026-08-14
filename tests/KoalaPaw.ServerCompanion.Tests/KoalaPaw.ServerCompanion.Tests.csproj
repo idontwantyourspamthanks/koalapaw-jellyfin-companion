@@ -14,6 +14,9 @@
     <!-- The plugin references Jellyfin with ExcludeAssets=runtime (Jellyfin supplies them in-proc),
          but tests that touch Jellyfin types (e.g. MediaSegmentDto) need the assembly at runtime. -->
     <PackageReference Include="Jellyfin.Model" Version="10.11.11" />
+    <!-- Same for MediaBrowser.Controller: SeasonAnalysisResult is nested in IntroSeasonAnalyser,
+         so the mapping tests load it and need the controller assembly at runtime. -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.11" />
   </ItemGroup>
 
   <ItemGroup>

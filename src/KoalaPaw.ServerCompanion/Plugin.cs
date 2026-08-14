@@ -41,6 +41,13 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 EmbeddedResourcePath = "KoalaPaw.ServerCompanion.Web.config.html",
                 EnableInMainMenu = true,
             },
+            new PluginPageInfo
+            {
+                Name = "KoalaPawIntroOutro",
+                EmbeddedResourcePath = "KoalaPaw.ServerCompanion.Web.segments.html",
+                EnableInMainMenu = true,
+                DisplayName = "KoalaPaw Intro & Outro",
+            },
         ];
     }
 }

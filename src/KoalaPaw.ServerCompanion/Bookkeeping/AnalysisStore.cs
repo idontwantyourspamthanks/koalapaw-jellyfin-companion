@@ -23,10 +23,13 @@ public sealed class AnalysisStore : IDisposable
 
     private readonly string _filePath;
     private readonly string _reportFilePath;
+    private readonly string _seasonScansFilePath;
     private readonly ILogger _logger;
     private readonly ConcurrentDictionary<(Guid ItemId, string Analyser), FailureRecord> _records = new();
+    private readonly ConcurrentDictionary<Guid, SeasonScanRecord> _seasonRecords = new();
     private SegmentScanReport? _segmentScanReport;
     private volatile bool _reportDirty;
+    private volatile bool _seasonRecordsDirty;
     private readonly object _flushLock = new();
     private readonly Timer _flushTimer;
     private volatile bool _dirty;
@@ -36,8 +39,10 @@ public sealed class AnalysisStore : IDisposable
         _logger = logger;
         _filePath = Path.Combine(dataFolderPath, "analysis-failures.json");
         _reportFilePath = Path.Combine(dataFolderPath, "segment-scan-report.json");
+        _seasonScansFilePath = Path.Combine(dataFolderPath, "season-scans.json");
         Load();
         LoadReport();
+        LoadSeasonRecords();
         _flushTimer = new Timer(_ => Flush(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
@@ -97,6 +102,39 @@ public sealed class AnalysisStore : IDisposable
         _reportDirty = true;
     }
 
+    /// <summary>Remember the latest scan outcome for a season (overwrites any prior record).</summary>
+    public void SetSeasonScanRecord(SeasonScanRecord record)
+    {
+        _seasonRecords[record.SeasonId] = record;
+        _seasonRecordsDirty = true;
+    }
+
+    /// <summary>The latest scan outcome for a season, or null when the season was never scanned.</summary>
+    public SeasonScanRecord? GetSeasonScanRecord(Guid seasonId) =>
+        _seasonRecords.TryGetValue(seasonId, out var record) ? record : null;
+
+    /// <summary>Snapshot of every recorded season scan, most recent first.</summary>
+    public IReadOnlyList<SeasonScanRecord> GetSeasonScanRecords() =>
+        _seasonRecords.Values.OrderByDescending(r => r.FinishedUtc).ToList();
+
+    /// <summary>Drop records for seasons that no longer exist so stale data can't accumulate. Returns the number removed.</summary>
+    public int PruneSeasonRecordsExcept(IReadOnlyCollection<Guid> liveSeasonIds)
+    {
+        var live = new HashSet<Guid>(liveSeasonIds);
+        var stale = _seasonRecords.Keys.Where(id => !live.Contains(id)).ToList();
+        foreach (var id in stale)
+        {
+            _seasonRecords.TryRemove(id, out _);
+        }
+
+        if (stale.Count > 0)
+        {
+            _seasonRecordsDirty = true;
+        }
+
+        return stale.Count;
+    }
+
     public void Dispose()
     {
         _flushTimer.Dispose();
@@ -105,7 +143,7 @@ public sealed class AnalysisStore : IDisposable
 
     private void Flush()
     {
-        if (!_dirty && !_reportDirty)
+        if (!_dirty && !_reportDirty && !_seasonRecordsDirty)
         {
             return;
         }
@@ -149,6 +187,26 @@ public sealed class AnalysisStore : IDisposable
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "AnalysisStore: failed to flush report to {Path}", _reportFilePath);
+                }
+            }
+
+            if (_seasonRecordsDirty)
+            {
+                _seasonRecordsDirty = false;
+                try
+                {
+                    var dir = Path.GetDirectoryName(_seasonScansFilePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var json = JsonSerializer.Serialize(_seasonRecords.Values.ToList(), JsonOptions);
+                    File.WriteAllText(_seasonScansFilePath, json);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AnalysisStore: failed to flush season scans to {Path}", _seasonScansFilePath);
                 }
             }
         }
@@ -199,6 +257,33 @@ public sealed class AnalysisStore : IDisposable
         }
     }
 
+    private void LoadSeasonRecords()
+    {
+        try
+        {
+            if (!File.Exists(_seasonScansFilePath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(_seasonScansFilePath);
+            var records = JsonSerializer.Deserialize<List<SeasonScanRecord>>(json, JsonOptions);
+            if (records is null)
+            {
+                return;
+            }
+
+            foreach (var record in records)
+            {
+                _seasonRecords[record.SeasonId] = record;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AnalysisStore: could not load season scans from {Path}, starting fresh", _seasonScansFilePath);
+        }
+    }
+
     /// <summary>Outcome of one intro/credits scan run — what the TV's scan page reports.</summary>
     public sealed class SegmentScanReport
     {
@@ -228,5 +313,41 @@ public sealed class AnalysisStore : IDisposable
         public string Reason { get; set; } = string.Empty;
 
         public DateTime Timestamp { get; set; }
+    }
+
+    /// <summary>
+    /// Latest scan outcome for one season — the dashboard shows this per season row. Overwritten
+    /// each run, so it is "latest known state", not history.
+    /// </summary>
+    public sealed class SeasonScanRecord
+    {
+        public Guid SeasonId { get; set; }
+
+        /// <summary>Captured at scan time — the series survives season merges.</summary>
+        public Guid SeriesId { get; set; }
+
+        public DateTime FinishedUtc { get; set; }
+
+        public int EpisodesSampled { get; set; }
+
+        public SeasonOutcome Outcome { get; set; }
+
+        public double? IntroEndSeconds { get; set; }
+
+        public double? IntroConfidence { get; set; }
+
+        public double? OutroLengthSeconds { get; set; }
+
+        public double? OutroConfidence { get; set; }
+    }
+
+    /// <summary>Season-level fate of the most recent scan run, as derived by the scan task.</summary>
+    public enum SeasonOutcome
+    {
+        Detected,
+        Partial,
+        NoCorrelation,
+        FingerprintFailures,
+        Error,
     }
 }

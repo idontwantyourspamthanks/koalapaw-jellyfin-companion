@@ -104,6 +104,9 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
             .OrderBy(g => g.Key)
             .ToList();
 
+        // Forget scan records for seasons that no longer exist in the library.
+        _analysisStore.PruneSeasonRecordsExcept(bySeason.Select(g => g.Key).ToList());
+
         var todo = new List<IGrouping<Guid, Episode>>();
         var skippedFailed = 0;
         foreach (var season in bySeason)
@@ -170,6 +173,7 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
         foreach (var season in todo)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var seriesId = season.First().SeriesId;
             try
             {
                 var result = await _analyser.AnalyseAndStageAsync(season.Cast<BaseItem>().ToList(), cancellationToken)
@@ -187,6 +191,8 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
                 {
                     outroConfidences.Add(outroConf);
                 }
+
+                _analysisStore.SetSeasonScanRecord(ToSeasonScanRecord(season.Key, seriesId, DateTime.UtcNow, result));
             }
             catch (OperationCanceledException)
             {
@@ -195,6 +201,13 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
             catch (Exception ex)
             {
                 _logger.LogError(ex, "SegmentScan: season {SeasonId} failed", season.Key);
+                _analysisStore.SetSeasonScanRecord(new AnalysisStore.SeasonScanRecord
+                {
+                    SeasonId = season.Key,
+                    SeriesId = seriesId,
+                    FinishedUtc = DateTime.UtcNow,
+                    Outcome = AnalysisStore.SeasonOutcome.Error,
+                });
             }
 
             done++;
@@ -220,6 +233,38 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
             outrosFound,
             staged);
         progress.Report(100);
+    }
+
+    /// <summary>
+    /// Maps one season's analysis result to the persisted scan record. Extracted as a static so
+    /// the outcome derivation (Detected / Partial / NoCorrelation) is unit-testable without
+    /// Jellyfin plumbing.
+    /// </summary>
+    internal static AnalysisStore.SeasonScanRecord ToSeasonScanRecord(
+        Guid seasonId,
+        Guid seriesId,
+        DateTime finishedUtc,
+        IntroSeasonAnalyser.SeasonAnalysisResult result)
+    {
+        var outcome = (result.Intro is not null, result.Outro is not null) switch
+        {
+            (true, true) => AnalysisStore.SeasonOutcome.Detected,
+            (true, false) or (false, true) => AnalysisStore.SeasonOutcome.Partial,
+            _ => AnalysisStore.SeasonOutcome.NoCorrelation,
+        };
+
+        return new AnalysisStore.SeasonScanRecord
+        {
+            SeasonId = seasonId,
+            SeriesId = seriesId,
+            FinishedUtc = finishedUtc,
+            EpisodesSampled = result.EpisodesScanned,
+            Outcome = outcome,
+            IntroEndSeconds = result.Intro?.EndSeconds,
+            IntroConfidence = result.Intro?.Confidence,
+            OutroLengthSeconds = result.Outro?.EndSeconds,
+            OutroConfidence = result.Outro?.Confidence,
+        };
     }
 
     /// <summary>Runs automatically after every library scan.</summary>

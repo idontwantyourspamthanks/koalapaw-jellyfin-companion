@@ -55,7 +55,7 @@ public sealed class IntroSeasonAnalyser
             .ToList();
         if (withPath.Count < 2)
         {
-            return new SeasonAnalysisResult(0, 0, 0, 0, null, null);
+            return new SeasonAnalysisResult(0, 0, 0, 0, null, null, null, null);
         }
 
         var heads = new List<uint[]?>(withPath.Count);
@@ -95,7 +95,7 @@ public sealed class IntroSeasonAnalyser
                 _analysisStore.RecordFailure(ep.Id, "segments", "no confident intro/outro correlation");
             }
 
-            return new SeasonAnalysisResult(withPath.Count, 0, 0, 0, null, null);
+            return new SeasonAnalysisResult(withPath.Count, 0, 0, 0, null, null, null, null);
         }
 
         if (intro is not null)
@@ -198,6 +198,9 @@ public sealed class IntroSeasonAnalyser
                 _pending.Clear(ep.Id);
             }
 
+            // Success invalidates failure: an episode that failed in an earlier run but now has
+            // segments staged onto it must not keep a stale "segments" failure record.
+            ClearSegmentsFailure(_analysisStore, ep.Id);
             staged++;
         }
 
@@ -207,17 +210,33 @@ public sealed class IntroSeasonAnalyser
             introsWritten,
             outrosWritten,
             intro?.Confidence,
-            outro?.Confidence);
+            outro?.Confidence,
+            intro,
+            outro);
     }
 
-    /// <summary>One season's analysis outcome — the inputs to the run-wide scan report.</summary>
+    /// <summary>
+    /// One season's analysis outcome — confidence and detected windows feed both the run-wide scan
+    /// report and the per-season scan records persisted for the dashboard.
+    /// </summary>
     public sealed record SeasonAnalysisResult(
         int EpisodesScanned,
         int EpisodesStaged,
         int IntrosFound,
         int OutrosFound,
         double? IntroConfidence,
-        double? OutroConfidence);
+        double? OutroConfidence,
+        IntroCorrelator.IntroGuess? Intro,
+        IntroCorrelator.IntroGuess? Outro);
+
+    /// <summary>
+    /// Forget a stale "segments" failure once an episode has segments staged onto it. Kept as a
+    /// small static seam so the success-invalidation rule is unit-testable without Jellyfin
+    /// plumbing (ChromaprintProbe is sealed and runs a real ffmpeg process; IMediaSegmentManager
+    /// and ILibraryManager have no test fakes in this repo).
+    /// </summary>
+    internal static void ClearSegmentsFailure(AnalysisStore store, Guid episodeId) =>
+        store.RemoveFailure(episodeId, "segments");
 
     private static MediaSegmentDto CloneForItem(MediaSegmentDto source, Guid itemId) =>
         new()
