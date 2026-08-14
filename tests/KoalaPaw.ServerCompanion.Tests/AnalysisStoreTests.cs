@@ -135,6 +135,45 @@ public class AnalysisStoreTests : IDisposable
     }
 
     [Fact]
+    public void SegmentScanReport_withoutScan_isNull()
+    {
+        using var store = CreateStore();
+
+        Assert.Null(store.GetSegmentScanReport());
+    }
+
+    [Fact]
+    public void SegmentScanReport_persistsAcrossNewInstance()
+    {
+        var finished = new DateTime(2026, 8, 14, 12, 0, 0, DateTimeKind.Utc);
+
+        using (var store = CreateStore())
+        {
+            store.SetSegmentScanReport(new AnalysisStore.SegmentScanReport
+            {
+                EpisodesScanned = 42,
+                IntrosFound = 12,
+                OutrosFound = 8,
+                IntroConfidence = 0.91,
+                OutroConfidence = 0.85,
+                FinishedUtc = finished,
+            });
+        } // Dispose flushes
+
+        using (var store = CreateStore())
+        {
+            var report = store.GetSegmentScanReport();
+            Assert.NotNull(report);
+            Assert.Equal(42, report!.EpisodesScanned);
+            Assert.Equal(12, report.IntrosFound);
+            Assert.Equal(8, report.OutrosFound);
+            Assert.Equal(0.91, report.IntroConfidence);
+            Assert.Equal(0.85, report.OutroConfidence);
+            Assert.Equal(finished, report.FinishedUtc);
+        }
+    }
+
+    [Fact]
     public void CorruptFile_startsFresh()
     {
         File.WriteAllText(Path.Combine(_tempDir, "analysis-failures.json"), "NOT JSON {{{");

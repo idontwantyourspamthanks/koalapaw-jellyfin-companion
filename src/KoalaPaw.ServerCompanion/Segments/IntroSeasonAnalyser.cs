@@ -45,7 +45,7 @@ public sealed class IntroSeasonAnalyser
     /// <summary>
     /// Analyse [episodes] (same season). Returns how many items received staged segments.
     /// </summary>
-    public async Task<int> AnalyseAndStageAsync(
+    public async Task<SeasonAnalysisResult> AnalyseAndStageAsync(
         IReadOnlyList<BaseItem> episodes,
         CancellationToken cancellationToken)
     {
@@ -55,7 +55,7 @@ public sealed class IntroSeasonAnalyser
             .ToList();
         if (withPath.Count < 2)
         {
-            return 0;
+            return new SeasonAnalysisResult(0, 0, 0, 0, null, null);
         }
 
         var heads = new List<uint[]?>(withPath.Count);
@@ -95,7 +95,7 @@ public sealed class IntroSeasonAnalyser
                 _analysisStore.RecordFailure(ep.Id, "segments", "no confident intro/outro correlation");
             }
 
-            return 0;
+            return new SeasonAnalysisResult(withPath.Count, 0, 0, 0, null, null);
         }
 
         if (intro is not null)
@@ -117,6 +117,8 @@ public sealed class IntroSeasonAnalyser
         }
 
         var staged = 0;
+        var introsWritten = 0;
+        var outrosWritten = 0;
         foreach (var ep in episodes.Where(e => !string.IsNullOrWhiteSpace(e.Path)))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -142,6 +144,7 @@ public sealed class IntroSeasonAnalyser
                         StartTicks = 0,
                         EndTicks = introEnd,
                     });
+                    introsWritten++;
                 }
             }
             else
@@ -166,6 +169,7 @@ public sealed class IntroSeasonAnalyser
                         StartTicks = runtime - creditTicks,
                         EndTicks = runtime,
                     });
+                    outrosWritten++;
                 }
             }
             else
@@ -197,8 +201,23 @@ public sealed class IntroSeasonAnalyser
             staged++;
         }
 
-        return staged;
+        return new SeasonAnalysisResult(
+            withPath.Count,
+            staged,
+            introsWritten,
+            outrosWritten,
+            intro?.Confidence,
+            outro?.Confidence);
     }
+
+    /// <summary>One season's analysis outcome — the inputs to the run-wide scan report.</summary>
+    public sealed record SeasonAnalysisResult(
+        int EpisodesScanned,
+        int EpisodesStaged,
+        int IntrosFound,
+        int OutrosFound,
+        double? IntroConfidence,
+        double? OutroConfidence);
 
     private static MediaSegmentDto CloneForItem(MediaSegmentDto source, Guid itemId) =>
         new()

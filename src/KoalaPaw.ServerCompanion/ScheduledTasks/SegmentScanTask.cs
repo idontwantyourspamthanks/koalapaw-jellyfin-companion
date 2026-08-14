@@ -162,13 +162,31 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
 
         var done = 0;
         var staged = 0;
+        var scanned = 0;
+        var introsFound = 0;
+        var outrosFound = 0;
+        var introConfidences = new List<double>();
+        var outroConfidences = new List<double>();
         foreach (var season in todo)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                staged += await _analyser.AnalyseAndStageAsync(season.Cast<BaseItem>().ToList(), cancellationToken)
+                var result = await _analyser.AnalyseAndStageAsync(season.Cast<BaseItem>().ToList(), cancellationToken)
                     .ConfigureAwait(false);
+                scanned += result.EpisodesScanned;
+                staged += result.EpisodesStaged;
+                introsFound += result.IntrosFound;
+                outrosFound += result.OutrosFound;
+                if (result.IntroConfidence is { } introConf)
+                {
+                    introConfidences.Add(introConf);
+                }
+
+                if (result.OutroConfidence is { } outroConf)
+                {
+                    outroConfidences.Add(outroConf);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -183,7 +201,24 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
             progress.Report(100.0 * done / todo.Count);
         }
 
-        _logger.LogInformation("SegmentScan: finished — staged segments on {Staged} episode(s)", staged);
+        // The TV's scan page reads this until the next real run — a "nothing to do" pass leaves the
+        // previous report standing rather than overwriting it with zeros.
+        _analysisStore.SetSegmentScanReport(new AnalysisStore.SegmentScanReport
+        {
+            EpisodesScanned = scanned,
+            IntrosFound = introsFound,
+            OutrosFound = outrosFound,
+            IntroConfidence = introConfidences.Count > 0 ? introConfidences.Average() : null,
+            OutroConfidence = outroConfidences.Count > 0 ? outroConfidences.Average() : null,
+            FinishedUtc = DateTime.UtcNow,
+        });
+
+        _logger.LogInformation(
+            "SegmentScan: finished — scanned {Scanned} episodes, found {Intros} intros and {Outros} outros, staged on {Staged} episode(s)",
+            scanned,
+            introsFound,
+            outrosFound,
+            staged);
         progress.Report(100);
     }
 

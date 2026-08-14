@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using KoalaPaw.ServerCompanion.Bookkeeping;
 using KoalaPaw.ServerCompanion.ScheduledTasks;
 using MediaBrowser.Controller.Library;
@@ -107,6 +108,43 @@ public class AnalysisController : ControllerBase
     {
         _taskManager.QueueIfNotRunning<SegmentScanTask>();
         return Accepted(new QueuedResult { Queued = true });
+    }
+
+    /// <summary>
+    /// Outcome of the last intro/credits scan — episodes analysed and intros/outros found, with
+    /// mean correlation confidence (0–1). All zeros when no scan has completed yet.
+    /// </summary>
+    [HttpGet("Segments/Report")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<SegmentScanReportDto> GetSegmentScanReport()
+    {
+        var report = _store.GetSegmentScanReport();
+        return Ok(new SegmentScanReportDto
+        {
+            EpisodesScanned = report?.EpisodesScanned ?? 0,
+            IntrosFound = report?.IntrosFound ?? 0,
+            OutrosFound = report?.OutrosFound ?? 0,
+            IntroConfidence = report?.IntroConfidence,
+            OutroConfidence = report?.OutroConfidence,
+        });
+    }
+
+    public sealed class SegmentScanReportDto
+    {
+        [JsonPropertyName("episodesScanned")]
+        public int EpisodesScanned { get; set; }
+
+        [JsonPropertyName("introsFound")]
+        public int IntrosFound { get; set; }
+
+        [JsonPropertyName("outrosFound")]
+        public int OutrosFound { get; set; }
+
+        [JsonPropertyName("introConfidence")]
+        public double? IntroConfidence { get; set; }
+
+        [JsonPropertyName("outroConfidence")]
+        public double? OutroConfidence { get; set; }
     }
 
     public sealed class FailureSummary

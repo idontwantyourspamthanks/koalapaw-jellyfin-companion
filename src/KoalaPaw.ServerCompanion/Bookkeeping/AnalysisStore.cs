@@ -22,8 +22,11 @@ public sealed class AnalysisStore : IDisposable
     };
 
     private readonly string _filePath;
+    private readonly string _reportFilePath;
     private readonly ILogger _logger;
     private readonly ConcurrentDictionary<(Guid ItemId, string Analyser), FailureRecord> _records = new();
+    private SegmentScanReport? _segmentScanReport;
+    private volatile bool _reportDirty;
     private readonly object _flushLock = new();
     private readonly Timer _flushTimer;
     private volatile bool _dirty;
@@ -32,7 +35,9 @@ public sealed class AnalysisStore : IDisposable
     {
         _logger = logger;
         _filePath = Path.Combine(dataFolderPath, "analysis-failures.json");
+        _reportFilePath = Path.Combine(dataFolderPath, "segment-scan-report.json");
         Load();
+        LoadReport();
         _flushTimer = new Timer(_ => Flush(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
@@ -82,6 +87,16 @@ public sealed class AnalysisStore : IDisposable
     /// <summary>Number of distinct (item, analyser) failure records.</summary>
     public int GetFailureCount() => _records.Count;
 
+    /// <summary>The last intro/credits scan's outcome, or null when no scan has completed yet.</summary>
+    public SegmentScanReport? GetSegmentScanReport() => _segmentScanReport;
+
+    /// <summary>Remember the last intro/credits scan's outcome so clients can read it anytime.</summary>
+    public void SetSegmentScanReport(SegmentScanReport report)
+    {
+        _segmentScanReport = report;
+        _reportDirty = true;
+    }
+
     public void Dispose()
     {
         _flushTimer.Dispose();
@@ -90,33 +105,51 @@ public sealed class AnalysisStore : IDisposable
 
     private void Flush()
     {
-        if (!_dirty)
+        if (!_dirty && !_reportDirty)
         {
             return;
         }
 
         lock (_flushLock)
         {
-            if (!_dirty)
+            if (_dirty)
             {
-                return;
-            }
-
-            _dirty = false;
-            try
-            {
-                var dir = Path.GetDirectoryName(_filePath);
-                if (!string.IsNullOrEmpty(dir))
+                _dirty = false;
+                try
                 {
-                    Directory.CreateDirectory(dir);
-                }
+                    var dir = Path.GetDirectoryName(_filePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
 
-                var json = JsonSerializer.Serialize(_records.Values.ToList(), JsonOptions);
-                File.WriteAllText(_filePath, json);
+                    var json = JsonSerializer.Serialize(_records.Values.ToList(), JsonOptions);
+                    File.WriteAllText(_filePath, json);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AnalysisStore: failed to flush to {Path}", _filePath);
+                }
             }
-            catch (Exception ex)
+
+            if (_reportDirty)
             {
-                _logger.LogError(ex, "AnalysisStore: failed to flush to {Path}", _filePath);
+                _reportDirty = false;
+                try
+                {
+                    var dir = Path.GetDirectoryName(_reportFilePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var json = JsonSerializer.Serialize(_segmentScanReport, JsonOptions);
+                    File.WriteAllText(_reportFilePath, json);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AnalysisStore: failed to flush report to {Path}", _reportFilePath);
+                }
             }
         }
     }
@@ -146,6 +179,42 @@ public sealed class AnalysisStore : IDisposable
         {
             _logger.LogWarning(ex, "AnalysisStore: could not load {Path}, starting fresh", _filePath);
         }
+    }
+
+    private void LoadReport()
+    {
+        try
+        {
+            if (!File.Exists(_reportFilePath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(_reportFilePath);
+            _segmentScanReport = JsonSerializer.Deserialize<SegmentScanReport>(json, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AnalysisStore: could not load report from {Path}, starting fresh", _reportFilePath);
+        }
+    }
+
+    /// <summary>Outcome of one intro/credits scan run — what the TV's scan page reports.</summary>
+    public sealed class SegmentScanReport
+    {
+        public int EpisodesScanned { get; set; }
+
+        public int IntrosFound { get; set; }
+
+        public int OutrosFound { get; set; }
+
+        /// <summary>Mean correlation confidence (0–1) across seasons with an intro, or null when none found.</summary>
+        public double? IntroConfidence { get; set; }
+
+        /// <summary>Mean correlation confidence (0–1) across seasons with an outro, or null when none found.</summary>
+        public double? OutroConfidence { get; set; }
+
+        public DateTime FinishedUtc { get; set; }
     }
 
     public sealed class FailureRecord
