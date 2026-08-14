@@ -88,10 +88,18 @@ All under the existing `KoalaPaw` route prefix and `RequiresElevation` policy. N
 
 Episode `state` derivation (server-side, so the TV app could reuse it later):
 
-- `failed` — failure record exists
+- `failed` — failure record exists **and** no segments in place
 - `detected` — has intro **and** outro
 - `partial` — exactly one of intro/outro
 - `notScanned` — neither, no failure record
+
+**Success invalidates failure.** Today `RemoveFailure` is only called by the Retry endpoint,
+so an episode that failed once and is later detected would keep its failure record forever.
+`IntroSeasonAnalyser.AnalyseAndStageAsync` must clear the `"segments"` failure record for
+every episode it successfully stages segments onto (`_analysisStore.RemoveFailure(ep.Id,
+"segments")` after a successful provider run). With that in place `failed`-first ordering can
+never go stale; the "and no segments in place" guard above is belt-and-braces for records
+written by older plugin versions.
 
 Trigger + progress need **no new plumbing**:
 
@@ -128,6 +136,8 @@ Layout, top to bottom:
   both nullable) — or returns the record shape directly.
 - `SegmentScanTask.ExecuteAsync` writes a `SeasonScanRecord` per season after each
   `AnalyseAndStageAsync` call, and on the `catch (Exception)` path records `Outcome.Error`.
+- `IntroSeasonAnalyser.AnalyseAndStageAsync` clears `"segments"` failure records for every
+  episode it stages onto (success invalidates earlier failures — see state derivation).
 - Everything else (batch caps, skip logic, triggers, report) untouched.
 
 ## Edge cases
@@ -147,7 +157,11 @@ Layout, top to bottom:
 Unit-heavy, per repo convention:
 
 - `SeasonScanRecord` mapping: `SeasonAnalysisResult` → record for each `SeasonOutcome`.
-- State derivation: detected/partial/failed/notScanned from (segments, failure) combos.
+- State derivation: detected/partial/failed/notScanned from (segments, failure) combos,
+  including segments-present + stale failure record → `detected`.
+- **Success invalidation:** episode with an existing `"segments"` failure record has it
+  cleared when `AnalyseAndStageAsync` stages segments onto it; afterwards derives `detected`,
+  not `failed`.
 - Overview/series/season rollup aggregation over a fixed item tree.
 - Rescan: clears the right failure records, stages empty lists for the right episodes only.
 - Store round-trip: records survive flush/load; stale-season pruning.
