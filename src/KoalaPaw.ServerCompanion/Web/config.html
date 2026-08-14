@@ -138,10 +138,11 @@
                         label.querySelector('.secondaryText').textContent = '(' + f.Analyser + ', ' + when + ')';
                         label.querySelector('.fieldDescription').textContent = f.Reason;
 
-                        var btn = document.createElement('button', { is: 'emby-button' });
-                        btn.type = 'button';
-                        btn.className = 'raised block';
-                        btn.innerHTML = '<span>Retry</span>';
+                        // innerHTML, not createElement(tag, { is }): the webcomponents polyfill's
+                        // createElement shim throws on the options object.
+                        var btnHost = document.createElement('div');
+                        btnHost.innerHTML = '<button is="emby-button" type="button" class="raised block"><span>Retry</span></button>';
+                        var btn = btnHost.firstChild;
                         btn.addEventListener('click', function () {
                             retryFailure(page, f.ItemId, f.Analyser);
                         });

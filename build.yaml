@@ -1,6 +1,6 @@
 name: "KoalaPaw Server Companion"
 guid: "cea40e65-c04f-4854-b6c4-3428360087fe"
-version: "0.0.11.1"
+version: "0.0.11.2"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Skip intros and even out video loudness for KoalaPaw (and any Jellyfin client)."
@@ -13,6 +13,7 @@ owner: "koalapaw"
 artifacts:
   - "KoalaPaw.ServerCompanion.dll"
 changelog: >
+  0.0.11.2 — Fix season/series drill-down and retry buttons: the webcomponents polyfill's createElement shim throws on the { is: "emby-button" } options object, so buttons are now created via innerHTML; load failures now log to the browser console instead of failing silently.
   0.0.11.1 — Fix dashboard pages: move inline scripts inside the page div. Jellyfin's view loader extracts only the data-role="page" element, so scripts outside it were silently dropped and every button (save, scan now, retry) was dead since 0.0.8.0.
   0.0.11.0 — Intro & Outro dashboard page: trigger the scan and watch live progress, then drill Library → Series → Season → Episode to see per-item intro/outro placement, season-level detection confidence, and failure state. Per-season scan records persist across runs; successful analysis now clears an item's earlier failure record. New admin endpoints under /KoalaPaw/Segments (Overview/Series/Seasons/Episodes + per-season Rescan).
   0.0.10.0 — Intro/credits scan reports its outcome: episodes scanned, intros/outros found, and mean correlation confidence, exposed at GET /KoalaPaw/Segments/Report (admin) so the TV's scan page can show why a show came back empty.

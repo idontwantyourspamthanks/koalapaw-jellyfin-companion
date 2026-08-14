@@ -263,7 +263,8 @@
                         });
                         container.appendChild(node.row);
                     });
-                }).catch(function () {
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load libraries', err);
                     container.textContent = 'Failed to load libraries.';
                 });
             }
@@ -282,7 +283,8 @@
                         });
                         body.appendChild(node.row);
                     });
-                }).catch(function () {
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load series', err);
                     body.textContent = 'Failed to load series.';
                 });
             }
@@ -307,17 +309,19 @@
                         });
                         body.appendChild(node.row);
                     });
-                }).catch(function () {
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load seasons', err);
                     body.textContent = 'Failed to load seasons.';
                 });
             }
 
             function makeRescanButton(seasonId) {
-                var btn = document.createElement('button', { is: 'emby-button' });
-                btn.type = 'button';
-                btn.className = 'raised';
+                // innerHTML, not createElement(tag, { is }): the webcomponents polyfill's
+                // createElement shim throws on the options object (t.toLowerCase).
+                var host = document.createElement('div');
+                host.innerHTML = '<button is="emby-button" type="button" class="raised"><span>Rescan this season</span></button>';
+                var btn = host.firstChild;
                 btn.style.cssText = 'margin:0;min-height:0;padding:0.25em 0.9em;';
-                btn.innerHTML = '<span>Rescan this season</span>';
                 btn.addEventListener('click', function (e) {
                     e.stopPropagation();
                     rescanSeason(seasonId);
@@ -393,7 +397,8 @@
                         return;
                     }
                     episodesHost.appendChild(episodeTable(episodes));
-                }).catch(function () {
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load episodes', err);
                     episodesHost.textContent = 'Failed to load episodes.';
                 });
             }
