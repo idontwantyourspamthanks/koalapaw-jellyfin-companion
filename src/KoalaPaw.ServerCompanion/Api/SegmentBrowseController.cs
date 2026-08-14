@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
-using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
@@ -14,7 +13,6 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaSegments;
 using MediaBrowser.Model.MediaSegments;
-using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -33,21 +31,18 @@ public class SegmentBrowseController : ControllerBase
     private readonly AnalysisStore _store;
     private readonly ILibraryManager _libraryManager;
     private readonly IMediaSegmentManager _segments;
-    private readonly ITaskManager _taskManager;
-    private readonly PendingSegmentResults _pending;
+    private readonly IntroSeasonAnalyser _analyser;
 
     public SegmentBrowseController(
         AnalysisStore store,
         ILibraryManager libraryManager,
         IMediaSegmentManager segments,
-        ITaskManager taskManager,
-        PendingSegmentResults pending)
+        IntroSeasonAnalyser analyser)
     {
         _store = store;
         _libraryManager = libraryManager;
         _segments = segments;
-        _taskManager = taskManager;
-        _pending = pending;
+        _analyser = analyser;
     }
 
     /// <summary>Per-library episode rollups plus the last scan's finish time.</summary>
@@ -135,6 +130,9 @@ public class SegmentBrowseController : ControllerBase
                     Failed = counts.Failed,
                     NotScanned = counts.NotScanned,
                     Scan = ToScanDto(_store.GetSeasonScanRecord(g.Key)),
+                    // One reason speaks for the tier: per-episode reasons are nearly always the
+                    // same message, and the episode table carries them individually anyway.
+                    FailureReason = g.Select(s => s.FailureReason).FirstOrDefault(r => r is not null),
                 };
             })
             .OrderBy(s => s.IndexNumber)
@@ -174,14 +172,15 @@ public class SegmentBrowseController : ControllerBase
     }
 
     /// <summary>
-    /// Clear the season's segment failures and delete our provider's Intro/Outro rows, then queue
-    /// a scan so the season is re-analysed. Deleting first is required because the scan skips
-    /// seasons whose episodes already have both segment types.
+    /// Analyse this season immediately and return its fresh scan record. An explicit user
+    /// action bypasses the scheduled task entirely — no batch caps, no failure suppression,
+    /// no waiting for the next 12 h run. Staging replaces our provider's rows, so previously
+    /// detected segments are refreshed rather than needing deletion first.
     /// </summary>
     [HttpPost("Seasons/{seasonId:guid}/Rescan")]
-    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<RescanResultDto>> RescanSeason(Guid seasonId, CancellationToken cancellationToken)
+    public async Task<ActionResult<SeasonScanDto>> RescanSeason(Guid seasonId)
     {
         if (_libraryManager.GetItemById(seasonId) is not Season)
         {
@@ -197,34 +196,25 @@ public class SegmentBrowseController : ControllerBase
             })
             .OfType<Episode>()
             .Where(e => !string.IsNullOrWhiteSpace(e.Path))
+            .Cast<BaseItem>()
             .ToList();
 
+        // Forget earlier failures so this season is eligible again everywhere, then analyse now.
         foreach (var episode in episodes)
         {
             _store.RemoveFailure(episode.Id, "segments");
-
-            // Provider-scoped delete: staging an empty list makes RunSegmentPluginProviders
-            // replace only KoalaPaw's rows with nothing (same path the analyser uses to stage).
-            _pending.Set(episode.Id, []);
-            try
-            {
-                await _segments.RunSegmentPluginProviders(
-                        episode,
-                        _libraryManager.GetLibraryOptions(episode),
-                        forceOverwrite: false,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            finally
-            {
-                // Always evict the staged entry — leaving it behind would leak into a later,
-                // unrelated GetMediaSegments call for this item.
-                _pending.Clear(episode.Id);
-            }
         }
 
-        _taskManager.QueueIfNotRunning<SegmentScanTask>();
-        return Accepted(new RescanResultDto { Queued = true });
+        // Deliberately NOT the request token: a client that disconnects mid-rescan (tab closed,
+        // navigation) must not abort analysis half-staged — finish and record the outcome.
+        var result = await _analyser.AnalyseAndStageAsync(episodes, CancellationToken.None)
+            .ConfigureAwait(false);
+
+        var seriesId = episodes.OfType<Episode>().FirstOrDefault()?.SeriesId ?? Guid.Empty;
+        var record = SegmentScanTask.ToSeasonScanRecord(seasonId, seriesId, DateTime.UtcNow, result);
+        _store.SetSeasonScanRecord(record);
+
+        return Ok(ToScanDto(record));
     }
 
     /// <summary>
@@ -419,6 +409,9 @@ public class SegmentBrowseController : ControllerBase
 
         [JsonPropertyName("scan")]
         public SeasonScanDto? Scan { get; set; }
+
+        [JsonPropertyName("failureReason")]
+        public string? FailureReason { get; set; }
     }
 
     public sealed class SeasonScanDto
@@ -485,11 +478,5 @@ public class SegmentBrowseController : ControllerBase
 
         [JsonPropertyName("endSeconds")]
         public double EndSeconds { get; set; }
-    }
-
-    public sealed class RescanResultDto
-    {
-        [JsonPropertyName("queued")]
-        public bool Queued { get; set; }
     }
 }

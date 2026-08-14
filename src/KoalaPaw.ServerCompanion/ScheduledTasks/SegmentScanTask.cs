@@ -84,8 +84,6 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
             return;
         }
 
-        var maxSeasons = config?.MaxSeasonsPerRun ?? 8;
-
         // IncludeItemTypes in the query — bare Recursive GetItemList deserializes every row and
         // unknown/orphaned types throw before we can OfType<Episode>().
         var episodes = _libraryManager.GetItemList(new InternalItemsQuery
@@ -112,10 +110,6 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
         foreach (var season in bySeason)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (todo.Count >= maxSeasons)
-            {
-                break;
-            }
 
             // Skip seasons where every episode previously failed segment analysis.
             if (season.All(ep => _analysisStore.HasFailed(ep.Id, "segments")))
@@ -161,7 +155,7 @@ public class SegmentScanTask : IScheduledTask, ILibraryPostScanTask
             return;
         }
 
-        _logger.LogInformation("SegmentScan: analysing {Count} season(s) (cap {Cap})", todo.Count, maxSeasons);
+        _logger.LogInformation("SegmentScan: analysing {Count} season(s)", todo.Count);
 
         var done = 0;
         var staged = 0;

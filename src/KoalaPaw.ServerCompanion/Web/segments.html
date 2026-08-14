@@ -53,7 +53,8 @@
             }
 
             function ajaxPost(url) {
-                return ApiClient.ajax({ type: 'POST', url: url });
+                // dataType json: the season rescan returns the fresh scan record in the body.
+                return ApiClient.ajax({ type: 'POST', url: url, dataType: 'json' });
             }
 
             function formatSeconds(seconds) {
@@ -330,11 +331,17 @@
             }
 
             function rescanSeason(seasonId) {
-                ajaxPost(ApiClient.getUrl('KoalaPaw/Segments/Seasons/' + seasonId + '/Rescan')).then(function () {
-                    startWatching('Rescan queued \u2014 watching progress\u2026');
+                // The server analyses the season before responding (no queue, no caps), so the
+                // response IS the fresh scan record — typically well under a minute.
+                setProgress(null, 'Scanning season — this typically takes under a minute…');
+                ajaxPost(ApiClient.getUrl('KoalaPaw/Segments/Seasons/' + seasonId + '/Rescan')).then(function (scan) {
+                    setProgress(null, 'Season scan finished: ' + outcomeLabel(scan.outcome) +
+                        ' (' + (scan.episodesSampled || 0) + ' episodes sampled). Reopen the season for details.');
                     Dashboard.processPluginConfigurationUpdateResult();
-                }).catch(function () {
-                    setProgress(null, 'Failed to queue the season rescan.');
+                    refreshAll();
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: season rescan failed', err);
+                    setProgress(null, 'Season rescan failed.');
                 });
             }
 
@@ -345,7 +352,9 @@
                 if (!scan) {
                     var none = document.createElement('div');
                     none.className = 'fieldDescription';
-                    none.textContent = 'Not scanned yet \u2014 run a scan to analyse this season.';
+                    none.textContent = season.failureReason
+                        ? 'Analysis failed — ' + season.failureReason
+                        : 'Not scanned yet — run a scan to analyse this season.';
                     block.appendChild(none);
                     return block;
                 }
@@ -380,8 +389,14 @@
                 if (parts.length) {
                     var line = document.createElement('div');
                     line.className = 'fieldDescription';
-                    line.textContent = parts.join(' \u00B7 ');
+                    line.textContent = parts.join(' · ');
                     block.appendChild(line);
+                }
+                if (season.failureReason) {
+                    var fail = document.createElement('div');
+                    fail.className = 'fieldDescription';
+                    fail.textContent = 'Failures: ' + season.failureReason;
+                    block.appendChild(fail);
                 }
                 return block;
             }

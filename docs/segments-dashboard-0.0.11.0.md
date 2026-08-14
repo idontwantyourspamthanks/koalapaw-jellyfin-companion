@@ -84,7 +84,7 @@ All under the existing `KoalaPaw` route prefix and `RequiresElevation` policy. N
 | `GET /KoalaPaw/Segments/Series?libraryId={id}` | Per series: same rollups + worst-case flag (has failures). |
 | `GET /KoalaPaw/Segments/Seasons?seriesId={id}` | Per season: episode counts by state, plus `SeasonScanRecord` (confidence, windows, outcome, finishedUtc) when present. |
 | `GET /KoalaPaw/Segments/Episodes?seasonId={id}` | Per episode: index, name, runtime, intro `{startSeconds,endSeconds}` / outro `{startSeconds,endSeconds}` from MediaSegments, season confidence, `state`, failure reason. |
-| `POST /KoalaPaw/Segments/Seasons/{seasonId}/Rescan` | 202. Clears `"segments"` failure records for the season's episodes, deletes *our provider's* Intro/Outro segments for them (via `PendingSegmentResults` + `RunSegmentPluginProviders` with empty staged lists — the same provider-scoped replace path the analyser uses), then queues `SegmentScanTask`. Deleting first is required because the task skips seasons whose episodes already have both segment types. |
+| `POST /KoalaPaw/Segments/Seasons/{seasonId}/Rescan` | 200 with the fresh `SeasonScanRecord`. **Direct analysis**: clears `"segments"` failure records for the season's episodes, then runs `IntroSeasonAnalyser` inline and persists the record — no queue, no batch cap, no failure suppression. Staging replaces our provider's rows, so no segment deletion is needed. 404 if season unknown. (Changed from the original delete-and-queue design: queueing the capped, GUID-ordered incremental task meant clicked seasons were wiped but not necessarily re-analysed.) |
 
 Episode `state` derivation (server-side, so the TV app could reuse it later):
 
@@ -138,7 +138,9 @@ Layout, top to bottom:
   `AnalyseAndStageAsync` call, and on the `catch (Exception)` path records `Outcome.Error`.
 - `IntroSeasonAnalyser.AnalyseAndStageAsync` clears `"segments"` failure records for every
   episode it stages onto (success invalidates earlier failures — see state derivation).
-- Everything else (batch caps, skip logic, triggers, report) untouched.
+- Everything else (skip logic, triggers, report) untouched. (Later in the branch: the
+  max-seasons-per-run cap was removed entirely — rescans and scheduled runs process every
+  eligible season.)
 
 ## Edge cases
 
@@ -148,9 +150,9 @@ Layout, top to bottom:
 - **Season skipped by caps/suppression:** simply has no new record — panel shows previous
   state, which is correct ("last known").
 - **Confidence attribution:** episodes carry the season's confidence; UI labels it as such.
-- **Rescan race:** rescan deletes segments then queues the task; if the task is already
-  running, `QueueIfNotRunning` no-ops and the season is picked up next run — acceptable,
-  failure-clearing already behaves this way.
+- **Rescan is synchronous:** the request returns when analysis completes (typically well under
+  a minute per season); concurrent rescans of different seasons are safe (per-item staging,
+  thread-safe store), and duplicate clicks on one season merely redo the same work.
 
 ## Tests (tests/KoalaPaw.ServerCompanion.Tests)
 

@@ -13,8 +13,6 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public int MaxLoudnessItemsPerRun { get; set; } = 40;
 
-    public int MaxSeasonsPerRun { get; set; } = 8;
-
     public int FingerprintHeadSeconds { get; set; } = 200;
 
     public int FingerprintTailSeconds { get; set; } = 300;

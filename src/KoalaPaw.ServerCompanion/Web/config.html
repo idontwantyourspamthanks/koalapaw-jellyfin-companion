@@ -56,10 +56,6 @@
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Intro / Credits Detection</h3>
                         <div class="inputContainer">
-                            <label class="inputLabel" for="maxSeasonsPerRun">Max seasons per run</label>
-                            <input type="number" is="emby-input" id="maxSeasonsPerRun" min="1" />
-                        </div>
-                        <div class="inputContainer">
                             <label class="inputLabel" for="fingerprintHeadSeconds">Fingerprint head (seconds)</label>
                             <input type="number" is="emby-input" id="fingerprintHeadSeconds" min="30" />
                             <div class="fieldDescription">How much of the episode opening to fingerprint.</div>
@@ -99,7 +95,6 @@
                     page.querySelector('#segmentDetectionEnabled').checked = config.SegmentDetectionEnabled;
                     page.querySelector('#targetLufs').value = config.TargetLufs;
                     page.querySelector('#maxLoudnessItemsPerRun').value = config.MaxLoudnessItemsPerRun;
-                    page.querySelector('#maxSeasonsPerRun').value = config.MaxSeasonsPerRun;
                     page.querySelector('#fingerprintHeadSeconds').value = config.FingerprintHeadSeconds;
                     page.querySelector('#fingerprintTailSeconds').value = config.FingerprintTailSeconds;
                 });
@@ -194,7 +189,6 @@
                     config.SegmentDetectionEnabled = page.querySelector('#segmentDetectionEnabled').checked;
                     config.TargetLufs = parseFloat(page.querySelector('#targetLufs').value);
                     config.MaxLoudnessItemsPerRun = parseInt(page.querySelector('#maxLoudnessItemsPerRun').value, 10);
-                    config.MaxSeasonsPerRun = parseInt(page.querySelector('#maxSeasonsPerRun').value, 10);
                     config.FingerprintHeadSeconds = parseInt(page.querySelector('#fingerprintHeadSeconds').value, 10);
                     config.FingerprintTailSeconds = parseInt(page.querySelector('#fingerprintTailSeconds').value, 10);
 
