@@ -46,7 +46,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 Name = "KoalaPawIntroOutro",
                 EmbeddedResourcePath = "KoalaPaw.ServerCompanion.Web.segments.html",
                 EnableInMainMenu = true,
-                DisplayName = "KoalaPaw Intro & Outro",
+                DisplayName = "KoalaPaw Media Analysis",
             },
         ];
     }
