@@ -24,12 +24,15 @@ public sealed class AnalysisStore : IDisposable
     private readonly string _filePath;
     private readonly string _reportFilePath;
     private readonly string _seasonScansFilePath;
+    private readonly string _loudnessResultsFilePath;
     private readonly ILogger _logger;
     private readonly ConcurrentDictionary<(Guid ItemId, string Analyser), FailureRecord> _records = new();
     private readonly ConcurrentDictionary<Guid, SeasonScanRecord> _seasonRecords = new();
+    private readonly ConcurrentDictionary<Guid, LoudnessScanRecord> _loudnessRecords = new();
     private SegmentScanReport? _segmentScanReport;
     private volatile bool _reportDirty;
     private volatile bool _seasonRecordsDirty;
+    private volatile bool _loudnessRecordsDirty;
     private readonly object _flushLock = new();
     private readonly Timer _flushTimer;
     private volatile bool _dirty;
@@ -40,9 +43,11 @@ public sealed class AnalysisStore : IDisposable
         _filePath = Path.Combine(dataFolderPath, "analysis-failures.json");
         _reportFilePath = Path.Combine(dataFolderPath, "segment-scan-report.json");
         _seasonScansFilePath = Path.Combine(dataFolderPath, "season-scans.json");
+        _loudnessResultsFilePath = Path.Combine(dataFolderPath, "loudness-results.json");
         Load();
         LoadReport();
         LoadSeasonRecords();
+        LoadLoudnessRecords();
         _flushTimer = new Timer(_ => Flush(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
@@ -135,6 +140,39 @@ public sealed class AnalysisStore : IDisposable
         return stale.Count;
     }
 
+    /// <summary>Remember the latest loudness outcome for an item (overwrites any prior record).</summary>
+    public void SetLoudnessScanRecord(LoudnessScanRecord record)
+    {
+        _loudnessRecords[record.ItemId] = record;
+        _loudnessRecordsDirty = true;
+    }
+
+    /// <summary>The latest loudness outcome for an item, or null when it was never scanned.</summary>
+    public LoudnessScanRecord? GetLoudnessScanRecord(Guid itemId) =>
+        _loudnessRecords.TryGetValue(itemId, out var record) ? record : null;
+
+    /// <summary>Snapshot of every recorded loudness outcome, most recent first.</summary>
+    public IReadOnlyList<LoudnessScanRecord> GetLoudnessScanRecords() =>
+        _loudnessRecords.Values.OrderByDescending(r => r.FinishedUtc).ToList();
+
+    /// <summary>Drop records for items that no longer exist so stale data can't accumulate. Returns the number removed.</summary>
+    public int PruneLoudnessRecordsExcept(IReadOnlyCollection<Guid> liveItemIds)
+    {
+        var live = new HashSet<Guid>(liveItemIds);
+        var stale = _loudnessRecords.Keys.Where(id => !live.Contains(id)).ToList();
+        foreach (var id in stale)
+        {
+            _loudnessRecords.TryRemove(id, out _);
+        }
+
+        if (stale.Count > 0)
+        {
+            _loudnessRecordsDirty = true;
+        }
+
+        return stale.Count;
+    }
+
     public void Dispose()
     {
         _flushTimer.Dispose();
@@ -143,7 +181,7 @@ public sealed class AnalysisStore : IDisposable
 
     private void Flush()
     {
-        if (!_dirty && !_reportDirty && !_seasonRecordsDirty)
+        if (!_dirty && !_reportDirty && !_seasonRecordsDirty && !_loudnessRecordsDirty)
         {
             return;
         }
@@ -207,6 +245,26 @@ public sealed class AnalysisStore : IDisposable
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "AnalysisStore: failed to flush season scans to {Path}", _seasonScansFilePath);
+                }
+            }
+
+            if (_loudnessRecordsDirty)
+            {
+                _loudnessRecordsDirty = false;
+                try
+                {
+                    var dir = Path.GetDirectoryName(_loudnessResultsFilePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var json = JsonSerializer.Serialize(_loudnessRecords.Values.ToList(), JsonOptions);
+                    File.WriteAllText(_loudnessResultsFilePath, json);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "AnalysisStore: failed to flush loudness results to {Path}", _loudnessResultsFilePath);
                 }
             }
         }
@@ -284,6 +342,33 @@ public sealed class AnalysisStore : IDisposable
         }
     }
 
+    private void LoadLoudnessRecords()
+    {
+        try
+        {
+            if (!File.Exists(_loudnessResultsFilePath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(_loudnessResultsFilePath);
+            var records = JsonSerializer.Deserialize<List<LoudnessScanRecord>>(json, JsonOptions);
+            if (records is null)
+            {
+                return;
+            }
+
+            foreach (var record in records)
+            {
+                _loudnessRecords[record.ItemId] = record;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AnalysisStore: could not load loudness results from {Path}, starting fresh", _loudnessResultsFilePath);
+        }
+    }
+
     /// <summary>Outcome of one intro/credits scan run — what the TV's scan page reports.</summary>
     public sealed class SegmentScanReport
     {
@@ -349,5 +434,22 @@ public sealed class AnalysisStore : IDisposable
         NoCorrelation,
         FingerprintFailures,
         Error,
+    }
+
+    /// <summary>
+    /// Latest loudness outcome for one item (episode or movie) — the dashboard shows this per
+    /// row. Overwritten each scan, so it is "latest known state", not history.
+    /// </summary>
+    public sealed class LoudnessScanRecord
+    {
+        public Guid ItemId { get; set; }
+
+        /// <summary>Measured ReplayGain when the scan succeeded; null when it failed.</summary>
+        public float? Gain { get; set; }
+
+        /// <summary>Why the measurement failed; null on success.</summary>
+        public string? FailureReason { get; set; }
+
+        public DateTime FinishedUtc { get; set; }
     }
 }

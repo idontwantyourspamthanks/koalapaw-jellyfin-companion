@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>KoalaPaw Intro &amp; Outro</title>
+    <title>KoalaPaw Media Analysis</title>
 </head>
 <body>
     <div id="KoalaPawSegmentsPage" data-role="page" class="page type-interior pluginConfigurationPage"
@@ -10,28 +10,41 @@
         <div data-role="content">
             <div class="content-primary">
                 <div class="sectionTitleContainer flex align-items-center">
-                    <h2 class="sectionTitle">KoalaPaw Intro &amp; Outro</h2>
+                    <h2 class="sectionTitle">KoalaPaw Media Analysis</h2>
                 </div>
 
                 <div class="verticalSection">
-                    <h3 class="sectionTitle">Scan</h3>
+                    <h3 class="sectionTitle">Intro &amp; Outro</h3>
                     <div style="display:flex;align-items:center;gap:0.75em;">
                         <button is="emby-button" type="button" id="scanSegmentsNow" class="raised block">
                             <span>Scan now</span>
                         </button>
                     </div>
-                    <div id="progressBar" style="display:none;margin-top:0.8em;">
+                    <div id="segmentsProgressBar" style="display:none;margin-top:0.8em;">
                         <div style="background:rgba(128,128,128,0.3);border-radius:0.35em;height:0.5em;overflow:hidden;">
-                            <div id="progressFill" style="background:#0b8b47;height:100%;width:0%;"></div>
+                            <div id="segmentsProgressFill" style="background:#0b8b47;height:100%;width:0%;"></div>
                         </div>
                     </div>
-                    <div id="progressStatus" class="fieldDescription" style="margin-top:0.5em;">No scan in progress.</div>
-                    <div id="scanSummary" class="fieldDescription" style="margin-top:0.5em;"></div>
+                    <div id="segmentsProgressStatus" class="fieldDescription" style="margin-top:0.5em;">No scan in progress.</div>
+                    <div id="segmentsScanSummary" class="fieldDescription" style="margin-top:0.5em;"></div>
+                    <div id="segmentsTree" style="margin-top:0.5em;"></div>
                 </div>
 
                 <div class="verticalSection">
-                    <h3 class="sectionTitle">Libraries</h3>
-                    <div id="tree"></div>
+                    <h3 class="sectionTitle">Loudness</h3>
+                    <div style="display:flex;align-items:center;gap:0.75em;">
+                        <button is="emby-button" type="button" id="scanLoudnessNow" class="raised block">
+                            <span>Scan now</span>
+                        </button>
+                    </div>
+                    <div id="loudnessProgressBar" style="display:none;margin-top:0.8em;">
+                        <div style="background:rgba(128,128,128,0.3);border-radius:0.35em;height:0.5em;overflow:hidden;">
+                            <div id="loudnessProgressFill" style="background:#0b8b47;height:100%;width:0%;"></div>
+                        </div>
+                    </div>
+                    <div id="loudnessProgressStatus" class="fieldDescription" style="margin-top:0.5em;">No scan in progress.</div>
+                    <div id="loudnessScanSummary" class="fieldDescription" style="margin-top:0.5em;"></div>
+                    <div id="loudnessTree" style="margin-top:0.5em;"></div>
                 </div>
             </div>
         </div>
@@ -40,20 +53,15 @@
         (function () {
             var page = document.querySelector('#KoalaPawSegmentsPage');
 
-            var TASK_KEY = 'KoalaPawIntroSegmentScan';
             var POLL_INTERVAL_MS = 2000;
             var MAX_IDLE_POLLS = 30;
-
-            var pollTimer = null;
-            var sawRunning = false;
-            var idlePolls = 0;
 
             function ajaxGet(url) {
                 return ApiClient.ajax({ type: 'GET', url: url, dataType: 'json' });
             }
 
             function ajaxPost(url) {
-                // dataType json: the season rescan returns the fresh scan record in the body.
+                // dataType json: the rescan endpoints return their result in the body.
                 return ApiClient.ajax({ type: 'POST', url: url, dataType: 'json' });
             }
 
@@ -66,6 +74,210 @@
                 var s = total % 60;
                 return m + ':' + (s < 10 ? '0' : '') + s;
             }
+
+            function badgePart(count, glyph, color, label) {
+                var span = document.createElement('span');
+                span.style.color = color;
+                span.style.fontWeight = '600';
+                span.style.whiteSpace = 'nowrap';
+                span.textContent = count + ' ' + glyph;
+                span.title = label;
+                return span;
+            }
+
+            function makeNode(name, badges) {
+                var row = document.createElement('div');
+                row.style.cssText = 'border-bottom:1px solid rgba(127,127,127,0.15);';
+
+                var header = document.createElement('div');
+                header.style.cssText = 'display:flex;align-items:center;gap:0.6em;padding:0.5em 0;cursor:pointer;';
+
+                var caret = document.createElement('span');
+                caret.style.cssText = 'width:1em;color:#888;text-align:center;';
+                caret.textContent = '\u25B8';
+
+                var nameEl = document.createElement('span');
+                nameEl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                nameEl.textContent = name;
+
+                header.appendChild(caret);
+                header.appendChild(nameEl);
+                badges.forEach(function (badge) {
+                    if (badge) {
+                        header.appendChild(badge);
+                    }
+                });
+
+                var body = document.createElement('div');
+                body.style.cssText = 'display:none;padding-left:1.5em;padding-bottom:0.4em;';
+
+                row.appendChild(header);
+                row.appendChild(body);
+
+                return {
+                    row: row,
+                    header: header,
+                    caret: caret,
+                    body: body,
+                    expanded: false,
+                    loaded: false
+                };
+            }
+
+            function toggleNode(node, loader) {
+                if (!node.expanded) {
+                    node.expanded = true;
+                    node.caret.textContent = '\u25BE';
+                    if (!node.loaded) {
+                        node.loaded = true;
+                        node.body.textContent = 'Loading\u2026';
+                        loader(node.body);
+                    }
+                    node.body.style.display = 'block';
+                } else {
+                    node.expanded = false;
+                    node.caret.textContent = '\u25B8';
+                    node.body.style.display = 'none';
+                }
+            }
+
+            function attachToggle(node, loader) {
+                node.header.addEventListener('click', function () {
+                    toggleNode(node, loader);
+                });
+            }
+
+            function cell(text) {
+                var td = document.createElement('td');
+                td.textContent = text;
+                return td;
+            }
+
+            // ---------- shared scan progress (one controller per analysis) ----------
+
+            function makeProgressController(taskKey, els, onFinished) {
+                var pollTimer = null;
+                var sawRunning = false;
+                var idlePolls = 0;
+
+                function setProgress(percent, status) {
+                    els.status.textContent = status;
+                    if (percent == null) {
+                        els.bar.style.display = 'none';
+                        els.fill.style.width = '0%';
+                    } else {
+                        els.bar.style.display = 'block';
+                        els.fill.style.width = percent + '%';
+                    }
+                }
+
+                function stopPolling() {
+                    if (pollTimer) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                    }
+                }
+
+                function findTask(tasks) {
+                    if (!tasks) {
+                        return null;
+                    }
+                    for (var i = 0; i < tasks.length; i++) {
+                        if (tasks[i].Key === taskKey) {
+                            return tasks[i];
+                        }
+                    }
+                    return null;
+                }
+
+                function updateProgress(task) {
+                    var percent = task.CurrentProgressPercentage;
+                    if (percent == null) {
+                        percent = 0;
+                    }
+                    setProgress(percent, 'Scan in progress \u2014 ' + Math.round(percent) + '%');
+                }
+
+                function startPollingLoop() {
+                    stopPolling();
+                    pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+                }
+
+                function startWatching(message) {
+                    stopPolling();
+                    sawRunning = false;
+                    idlePolls = 0;
+                    setProgress(null, message);
+                    startPollingLoop();
+                    pollOnce();
+                }
+
+                function pollOnce() {
+                    ajaxGet(ApiClient.getUrl('ScheduledTasks')).then(function (tasks) {
+                        var task = findTask(tasks);
+                        if (task && task.State === 'Running') {
+                            sawRunning = true;
+                            idlePolls = 0;
+                            updateProgress(task);
+                        } else if (sawRunning) {
+                            stopPolling();
+                            sawRunning = false;
+                            idlePolls = 0;
+                            setProgress(null, 'Scan finished.');
+                            onFinished();
+                        } else {
+                            idlePolls++;
+                            if (idlePolls >= MAX_IDLE_POLLS) {
+                                stopPolling();
+                                sawRunning = false;
+                                idlePolls = 0;
+                                setProgress(null, 'No scan progress observed.');
+                                onFinished();
+                            }
+                        }
+                    }).catch(function () {
+                        idlePolls++;
+                        if (idlePolls >= MAX_IDLE_POLLS) {
+                            stopPolling();
+                            sawRunning = false;
+                            idlePolls = 0;
+                            setProgress(null, 'Lost connection while watching the scan.');
+                            onFinished();
+                        } else {
+                            setProgress(null, 'Scan in progress \u2014 status update failed; retrying\u2026');
+                        }
+                    });
+                }
+
+                // If a scan is already running when the page opens, pick up its progress.
+                function checkRunning() {
+                    ajaxGet(ApiClient.getUrl('ScheduledTasks')).then(function (tasks) {
+                        var task = findTask(tasks);
+                        if (task && task.State === 'Running') {
+                            sawRunning = true;
+                            startPollingLoop();
+                            updateProgress(task);
+                        } else {
+                            setProgress(null, 'No scan in progress.');
+                        }
+                    }).catch(function () {});
+                }
+
+                return {
+                    setProgress: setProgress,
+                    startWatching: startWatching,
+                    checkRunning: checkRunning,
+                    stop: stopPolling
+                };
+            }
+
+            // ================= Intro & Outro =================
+
+            var segmentsProgress = makeProgressController('KoalaPawIntroSegmentScan', {
+                bar: page.querySelector('#segmentsProgressBar'),
+                fill: page.querySelector('#segmentsProgressFill'),
+                status: page.querySelector('#segmentsProgressStatus')
+            }, refreshSegments);
 
             function introLabel(episode) {
                 if (!episode.intro) {
@@ -93,16 +305,6 @@
                 span.style.backgroundColor = color;
                 span.textContent = value.toFixed(2) + ' ' + textLabel;
                 span.title = titleLabel;
-                return span;
-            }
-
-            function badgePart(count, glyph, color, label) {
-                var span = document.createElement('span');
-                span.style.color = color;
-                span.style.fontWeight = '600';
-                span.style.whiteSpace = 'nowrap';
-                span.textContent = count + ' ' + glyph;
-                span.title = label;
                 return span;
             }
 
@@ -186,69 +388,27 @@
                 }
             }
 
-            function makeNode(name, badges) {
-                var row = document.createElement('div');
-                row.style.cssText = 'border-bottom:1px solid rgba(127,127,127,0.15);';
-
-                var header = document.createElement('div');
-                header.style.cssText = 'display:flex;align-items:center;gap:0.6em;padding:0.5em 0;cursor:pointer;';
-
-                var caret = document.createElement('span');
-                caret.style.cssText = 'width:1em;color:#888;text-align:center;';
-                caret.textContent = '\u25B8';
-
-                var nameEl = document.createElement('span');
-                nameEl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-                nameEl.textContent = name;
-
-                header.appendChild(caret);
-                header.appendChild(nameEl);
-                badges.forEach(function (badge) {
-                    if (badge) {
-                        header.appendChild(badge);
+            function loadSegmentsSummary() {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Report')).then(function (report) {
+                    var el = page.querySelector('#segmentsScanSummary');
+                    if (!report.episodesScanned) {
+                        el.textContent = 'No scan completed yet.';
+                        return;
                     }
-                });
-
-                var body = document.createElement('div');
-                body.style.cssText = 'display:none;padding-left:1.5em;padding-bottom:0.4em;';
-
-                row.appendChild(header);
-                row.appendChild(body);
-
-                return {
-                    row: row,
-                    header: header,
-                    caret: caret,
-                    body: body,
-                    expanded: false,
-                    loaded: false
-                };
-            }
-
-            function toggleNode(node, loader) {
-                if (!node.expanded) {
-                    node.expanded = true;
-                    node.caret.textContent = '\u25BE';
-                    if (!node.loaded) {
-                        node.loaded = true;
-                        node.body.textContent = 'Loading\u2026';
-                        loader(node.body);
+                    var parts = [report.episodesScanned + ' episodes', report.introsFound + ' intros', report.outrosFound + ' outros'];
+                    if (report.introConfidence != null) {
+                        parts.push('intro confidence ' + report.introConfidence.toFixed(2));
                     }
-                    node.body.style.display = 'block';
-                } else {
-                    node.expanded = false;
-                    node.caret.textContent = '\u25B8';
-                    node.body.style.display = 'none';
-                }
-            }
-
-            function attachToggle(node, loader) {
-                node.header.addEventListener('click', function () {
-                    toggleNode(node, loader);
+                    if (report.outroConfidence != null) {
+                        parts.push('outro confidence ' + report.outroConfidence.toFixed(2));
+                    }
+                    el.textContent = 'Last scan \u2014 ' + parts.join(', ') + '.';
+                }).catch(function () {
+                    page.querySelector('#segmentsScanSummary').textContent = 'Unable to load the scan summary.';
                 });
             }
 
-            function loadLibraries(container) {
+            function loadSegmentsLibraries(container) {
                 container.textContent = 'Loading\u2026';
                 ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Overview')).then(function (data) {
                     container.textContent = '';
@@ -260,7 +420,7 @@
                     libraries.forEach(function (library) {
                         var node = makeNode(library.name, [countBadges(library)]);
                         attachToggle(node, function (body) {
-                            loadSeries(body, library.libraryId);
+                            loadSegmentsSeries(body, library.libraryId);
                         });
                         container.appendChild(node.row);
                     });
@@ -270,7 +430,7 @@
                 });
             }
 
-            function loadSeries(body, libraryId) {
+            function loadSegmentsSeries(body, libraryId) {
                 ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Series', { libraryId: libraryId })).then(function (seriesList) {
                     body.textContent = '';
                     if (!seriesList.length) {
@@ -280,7 +440,7 @@
                     seriesList.forEach(function (series) {
                         var node = makeNode(series.name, [countBadges(series)]);
                         attachToggle(node, function (b) {
-                            loadSeasons(b, series.seriesId);
+                            loadSegmentsSeasons(b, series.seriesId);
                         });
                         body.appendChild(node.row);
                     });
@@ -290,7 +450,7 @@
                 });
             }
 
-            function loadSeasons(body, seriesId) {
+            function loadSegmentsSeasons(body, seriesId) {
                 ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Seasons', { seriesId: seriesId })).then(function (seasonList) {
                     body.textContent = '';
                     if (!seasonList.length) {
@@ -303,10 +463,10 @@
                             badges.push(confidenceBadge(season.scan.introConfidence, 'season', 'Season intro confidence'));
                             badges.push(confidenceBadge(season.scan.outroConfidence, 'season', 'Season outro confidence'));
                         }
-                        badges.push(makeRescanButton(season.seasonId));
+                        badges.push(makeSegmentsRescanButton(season.seasonId));
                         var node = makeNode(season.name, badges);
                         attachToggle(node, function (b) {
-                            loadSeasonDetail(b, season);
+                            loadSegmentsSeasonDetail(b, season);
                         });
                         body.appendChild(node.row);
                     });
@@ -316,7 +476,7 @@
                 });
             }
 
-            function makeRescanButton(seasonId) {
+            function makeSegmentsRescanButton(seasonId) {
                 // innerHTML, not createElement(tag, { is }): the webcomponents polyfill's
                 // createElement shim throws on the options object (t.toLowerCase).
                 var host = document.createElement('div');
@@ -325,23 +485,23 @@
                 btn.style.cssText = 'margin:0;min-height:0;padding:0.25em 0.9em;';
                 btn.addEventListener('click', function (e) {
                     e.stopPropagation();
-                    rescanSeason(seasonId);
+                    rescanSegmentsSeason(seasonId);
                 });
                 return btn;
             }
 
-            function rescanSeason(seasonId) {
+            function rescanSegmentsSeason(seasonId) {
                 // The server analyses the season before responding (no queue, no caps), so the
                 // response IS the fresh scan record — typically well under a minute.
-                setProgress(null, 'Scanning season — this typically takes under a minute…');
+                segmentsProgress.setProgress(null, 'Scanning season \u2014 this typically takes under a minute\u2026');
                 ajaxPost(ApiClient.getUrl('KoalaPaw/Segments/Seasons/' + seasonId + '/Rescan')).then(function (scan) {
-                    setProgress(null, 'Season scan finished: ' + outcomeLabel(scan.outcome) +
+                    segmentsProgress.setProgress(null, 'Season scan finished: ' + outcomeLabel(scan.outcome) +
                         ' (' + (scan.episodesSampled || 0) + ' episodes sampled). Reopen the season for details.');
                     Dashboard.processPluginConfigurationUpdateResult();
-                    refreshAll();
+                    refreshSegments();
                 }).catch(function (err) {
                     console.warn('KoalaPaw: season rescan failed', err);
-                    setProgress(null, 'Season rescan failed.');
+                    segmentsProgress.setProgress(null, 'Season rescan failed.');
                 });
             }
 
@@ -353,8 +513,8 @@
                     var none = document.createElement('div');
                     none.className = 'fieldDescription';
                     none.textContent = season.failureReason
-                        ? 'Analysis failed — ' + season.failureReason
-                        : 'Not scanned yet — run a scan to analyse this season.';
+                        ? 'Analysis failed \u2014 ' + season.failureReason
+                        : 'Not scanned yet \u2014 run a scan to analyse this season.';
                     block.appendChild(none);
                     return block;
                 }
@@ -401,7 +561,7 @@
                 return block;
             }
 
-            function loadSeasonDetail(body, season) {
+            function loadSegmentsSeasonDetail(body, season) {
                 body.textContent = '';
                 body.appendChild(seasonDetail(season));
                 var episodesHost = document.createElement('div');
@@ -411,20 +571,14 @@
                         episodesHost.textContent = 'No episodes.';
                         return;
                     }
-                    episodesHost.appendChild(episodeTable(episodes));
+                    episodesHost.appendChild(segmentsEpisodeTable(episodes));
                 }).catch(function (err) {
                     console.warn('KoalaPaw: failed to load episodes', err);
                     episodesHost.textContent = 'Failed to load episodes.';
                 });
             }
 
-            function cell(text) {
-                var td = document.createElement('td');
-                td.textContent = text;
-                return td;
-            }
-
-            function episodeTable(episodes) {
+            function segmentsEpisodeTable(episodes) {
                 var table = document.createElement('table');
                 table.className = 'table';
                 table.style.cssText = 'width:100%;margin-top:0.6em;';
@@ -483,154 +637,359 @@
                 return table;
             }
 
-            function loadSummary() {
-                ajaxGet(ApiClient.getUrl('KoalaPaw/Segments/Report')).then(function (report) {
-                    var el = page.querySelector('#scanSummary');
-                    if (!report.episodesScanned) {
+            function refreshSegments() {
+                loadSegmentsSummary();
+                loadSegmentsLibraries(page.querySelector('#segmentsTree'));
+            }
+
+            // ================= Loudness =================
+
+            var loudnessProgress = makeProgressController('KoalaPawVideoLoudnessScan', {
+                bar: page.querySelector('#loudnessProgressBar'),
+                fill: page.querySelector('#loudnessProgressFill'),
+                status: page.querySelector('#loudnessProgressStatus')
+            }, refreshLoudness);
+
+            function combineCounts(a, b) {
+                return {
+                    total: a.total + b.total,
+                    scanned: a.scanned + b.scanned,
+                    failed: a.failed + b.failed,
+                    notScanned: a.notScanned + b.notScanned
+                };
+            }
+
+            function loudnessCountBadges(counts) {
+                var parts = [];
+                if (counts.scanned) {
+                    parts.push(badgePart(counts.scanned, '\u2713', '#1a9850', 'gain measured'));
+                }
+                if (counts.failed) {
+                    parts.push(badgePart(counts.failed, '\u2717', '#c0392b', 'failed'));
+                }
+                var container = document.createElement('span');
+                container.style.cssText = 'display:inline-flex;align-items:center;gap:0.5em;color:#666;font-size:0.9em;white-space:nowrap;';
+                parts.forEach(function (part, i) {
+                    if (i > 0) {
+                        container.appendChild(document.createTextNode('\u00B7'));
+                    }
+                    container.appendChild(part);
+                });
+                if (!parts.length) {
+                    var none = document.createElement('span');
+                    none.style.color = '#999';
+                    none.textContent = counts.total ? 'not scanned' : '0 items';
+                    container.appendChild(none);
+                }
+                return container;
+            }
+
+            function gainLabel(gain) {
+                if (gain == null || isNaN(gain)) {
+                    return '\u2014';
+                }
+                return (gain > 0 ? '+' : '') + gain.toFixed(1) + ' dB';
+            }
+
+            function loudnessStateIcon(state, failureReason) {
+                var icon = '\u2014';
+                var color = '#999';
+                var title = 'Not scanned';
+                switch (state) {
+                    case 'scanned':
+                        icon = '\u2713';
+                        color = '#1a9850';
+                        title = 'Measured \u2014 gain in place';
+                        break;
+                    case 'failed':
+                        icon = '\u2717';
+                        color = '#c0392b';
+                        title = 'Failed \u2014 ' + (failureReason || 'no reason recorded');
+                        break;
+                    default:
+                        break;
+                }
+                var span = document.createElement('span');
+                span.style.cssText = 'font-weight:700;font-size:1.05em;';
+                span.style.color = color;
+                span.textContent = icon;
+                span.title = title;
+                return span;
+            }
+
+            function loadLoudnessSummary() {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Loudness/Overview')).then(function (data) {
+                    var el = page.querySelector('#loudnessScanSummary');
+                    var total = 0;
+                    var scanned = 0;
+                    var failed = 0;
+                    (data.libraries || []).forEach(function (lib) {
+                        total += lib.episodes.total + lib.movies.total;
+                        scanned += lib.episodes.scanned + lib.movies.scanned;
+                        failed += lib.episodes.failed + lib.movies.failed;
+                    });
+                    if (!total) {
                         el.textContent = 'No scan completed yet.';
                         return;
                     }
-                    var parts = [report.episodesScanned + ' episodes', report.introsFound + ' intros', report.outrosFound + ' outros'];
-                    if (report.introConfidence != null) {
-                        parts.push('intro confidence ' + report.introConfidence.toFixed(2));
+                    var parts = [scanned + ' videos measured'];
+                    if (failed) {
+                        parts.push(failed + ' failed');
                     }
-                    if (report.outroConfidence != null) {
-                        parts.push('outro confidence ' + report.outroConfidence.toFixed(2));
+                    if (data.lastScanUtc) {
+                        parts.push('last scan ' + new Date(data.lastScanUtc).toLocaleString());
                     }
                     el.textContent = 'Last scan \u2014 ' + parts.join(', ') + '.';
                 }).catch(function () {
-                    page.querySelector('#scanSummary').textContent = 'Unable to load the scan summary.';
+                    page.querySelector('#loudnessScanSummary').textContent = 'Unable to load the scan summary.';
                 });
             }
 
-            function loadTree() {
-                loadLibraries(page.querySelector('#tree'));
-            }
-
-            function refreshAll() {
-                loadSummary();
-                loadTree();
-            }
-
-            function setProgress(percent, status) {
-                page.querySelector('#progressStatus').textContent = status;
-                var bar = page.querySelector('#progressBar');
-                if (percent == null) {
-                    bar.style.display = 'none';
-                    page.querySelector('#progressFill').style.width = '0%';
-                } else {
-                    bar.style.display = 'block';
-                    page.querySelector('#progressFill').style.width = percent + '%';
-                }
-            }
-
-            function stopProgressPolling() {
-                if (pollTimer) {
-                    clearInterval(pollTimer);
-                    pollTimer = null;
-                }
-            }
-
-            function findTask(tasks) {
-                if (!tasks) {
-                    return null;
-                }
-                for (var i = 0; i < tasks.length; i++) {
-                    if (tasks[i].Key === TASK_KEY) {
-                        return tasks[i];
+            function loadLoudnessLibraries(container) {
+                container.textContent = 'Loading\u2026';
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Loudness/Overview')).then(function (data) {
+                    container.textContent = '';
+                    var libraries = data.libraries || [];
+                    if (!libraries.length) {
+                        container.textContent = 'No libraries with videos.';
+                        return;
                     }
-                }
-                return null;
-            }
-
-            function updateProgress(task) {
-                var percent = task.CurrentProgressPercentage;
-                if (percent == null) {
-                    percent = 0;
-                }
-                setProgress(percent, 'Scan in progress \u2014 ' + Math.round(percent) + '%');
-            }
-
-            function startPollingLoop() {
-                stopProgressPolling();
-                pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
-            }
-
-            function startWatching(message) {
-                stopProgressPolling();
-                sawRunning = false;
-                idlePolls = 0;
-                setProgress(null, message);
-                startPollingLoop();
-                pollOnce();
-            }
-
-            function pollOnce() {
-                ajaxGet(ApiClient.getUrl('ScheduledTasks')).then(function (tasks) {
-                    var task = findTask(tasks);
-                    if (task && task.State === 'Running') {
-                        sawRunning = true;
-                        idlePolls = 0;
-                        updateProgress(task);
-                    } else if (sawRunning) {
-                        stopProgressPolling();
-                        sawRunning = false;
-                        idlePolls = 0;
-                        setProgress(null, 'Scan finished.');
-                        refreshAll();
-                    } else {
-                        idlePolls++;
-                        if (idlePolls >= MAX_IDLE_POLLS) {
-                            stopProgressPolling();
-                            sawRunning = false;
-                            idlePolls = 0;
-                            setProgress(null, 'No scan progress observed.');
-                            refreshAll();
-                        }
-                    }
-                }).catch(function () {
-                    idlePolls++;
-                    if (idlePolls >= MAX_IDLE_POLLS) {
-                        stopProgressPolling();
-                        sawRunning = false;
-                        idlePolls = 0;
-                        setProgress(null, 'Lost connection while watching the scan.');
-                        refreshAll();
-                    } else {
-                        setProgress(null, 'Scan in progress \u2014 status update failed; retrying\u2026');
-                    }
+                    libraries.forEach(function (library) {
+                        var node = makeNode(library.name, [loudnessCountBadges(combineCounts(library.episodes, library.movies))]);
+                        attachToggle(node, function (body) {
+                            loadLoudnessSeries(body, library);
+                        });
+                        container.appendChild(node.row);
+                    });
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load libraries', err);
+                    container.textContent = 'Failed to load libraries.';
                 });
             }
 
-            // If a scan is already running when the page opens, pick up its progress.
-            function checkRunningTask() {
-                ajaxGet(ApiClient.getUrl('ScheduledTasks')).then(function (tasks) {
-                    var task = findTask(tasks);
-                    if (task && task.State === 'Running') {
-                        sawRunning = true;
-                        startPollingLoop();
-                        updateProgress(task);
-                    } else {
-                        setProgress(null, 'No scan in progress.');
+            function loadLoudnessSeries(body, library) {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Loudness/Series', { libraryId: library.libraryId })).then(function (seriesList) {
+                    body.textContent = '';
+                    if (!seriesList.length && !library.movies.total) {
+                        body.textContent = 'No series or movies.';
+                        return;
                     }
-                }).catch(function () {});
+                    seriesList.forEach(function (series) {
+                        var badges = [loudnessCountBadges(series.episodes), makeLoudnessRescanButton('Series', series.seriesId, 'series')];
+                        var node = makeNode(series.name, badges);
+                        attachToggle(node, function (b) {
+                            loadLoudnessSeasons(b, series.seriesId);
+                        });
+                        body.appendChild(node.row);
+                    });
+                    if (library.movies.total) {
+                        var moviesNode = makeNode('Movies (' + library.movies.total + ')', [loudnessCountBadges(library.movies)]);
+                        attachToggle(moviesNode, function (b) {
+                            loadLoudnessMovies(b, library.libraryId);
+                        });
+                        body.appendChild(moviesNode.row);
+                    }
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load series', err);
+                    body.textContent = 'Failed to load series.';
+                });
             }
+
+            function loadLoudnessSeasons(body, seriesId) {
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Loudness/Seasons', { seriesId: seriesId })).then(function (seasonList) {
+                    body.textContent = '';
+                    if (!seasonList.length) {
+                        body.textContent = 'No seasons.';
+                        return;
+                    }
+                    seasonList.forEach(function (season) {
+                        var badges = [loudnessCountBadges(season.episodes), makeLoudnessRescanButton('Seasons', season.seasonId, 'season')];
+                        var node = makeNode(season.name, badges);
+                        attachToggle(node, function (b) {
+                            loadLoudnessEpisodes(b, season.seasonId);
+                        });
+                        body.appendChild(node.row);
+                    });
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load seasons', err);
+                    body.textContent = 'Failed to load seasons.';
+                });
+            }
+
+            function loadLoudnessEpisodes(body, seasonId) {
+                body.textContent = '';
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Loudness/Episodes', { seasonId: seasonId })).then(function (episodes) {
+                    if (!episodes.length) {
+                        body.textContent = 'No episodes.';
+                        return;
+                    }
+                    body.appendChild(loudnessEpisodeTable(episodes));
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load episodes', err);
+                    body.textContent = 'Failed to load episodes.';
+                });
+            }
+
+            function loudnessEpisodeTable(episodes) {
+                var table = document.createElement('table');
+                table.className = 'table';
+                table.style.cssText = 'width:100%;margin-top:0.6em;';
+
+                var thead = document.createElement('thead');
+                var headRow = document.createElement('tr');
+                ['#', 'Title', 'Gain', 'State'].forEach(function (heading) {
+                    var th = document.createElement('th');
+                    th.textContent = heading;
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+
+                var tbody = document.createElement('tbody');
+                episodes.forEach(function (episode) {
+                    var row = document.createElement('tr');
+                    if (episode.state === 'failed') {
+                        row.title = episode.failureReason || 'No reason recorded';
+                    }
+                    row.appendChild(cell(episode.indexNumber != null ? String(episode.indexNumber) : '\u2014'));
+                    row.appendChild(cell(episode.name || '\u2014'));
+
+                    var gainCell = cell(gainLabel(episode.gain));
+                    gainCell.style.cssText = 'white-space:nowrap;';
+                    if (episode.finishedUtc) {
+                        gainCell.title = 'Measured ' + new Date(episode.finishedUtc).toLocaleString();
+                    }
+                    row.appendChild(gainCell);
+
+                    var stateCell = document.createElement('td');
+                    stateCell.appendChild(loudnessStateIcon(episode.state, episode.failureReason));
+                    row.appendChild(stateCell);
+
+                    tbody.appendChild(row);
+                });
+                table.appendChild(tbody);
+                return table;
+            }
+
+            function loadLoudnessMovies(body, libraryId) {
+                body.textContent = '';
+                ajaxGet(ApiClient.getUrl('KoalaPaw/Loudness/Movies', { libraryId: libraryId })).then(function (movies) {
+                    if (!movies.length) {
+                        body.textContent = 'No movies.';
+                        return;
+                    }
+                    body.appendChild(loudnessMovieTable(movies));
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: failed to load movies', err);
+                    body.textContent = 'Failed to load movies.';
+                });
+            }
+
+            function loudnessMovieTable(movies) {
+                var table = document.createElement('table');
+                table.className = 'table';
+                table.style.cssText = 'width:100%;margin-top:0.6em;';
+
+                var thead = document.createElement('thead');
+                var headRow = document.createElement('tr');
+                ['Title', 'Gain', 'State', ''].forEach(function (heading) {
+                    var th = document.createElement('th');
+                    th.textContent = heading;
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+
+                var tbody = document.createElement('tbody');
+                movies.forEach(function (movie) {
+                    var row = document.createElement('tr');
+                    if (movie.state === 'failed') {
+                        row.title = movie.failureReason || 'No reason recorded';
+                    }
+                    row.appendChild(cell(movie.name || '\u2014'));
+
+                    var gainCell = cell(gainLabel(movie.gain));
+                    gainCell.style.cssText = 'white-space:nowrap;';
+                    if (movie.finishedUtc) {
+                        gainCell.title = 'Measured ' + new Date(movie.finishedUtc).toLocaleString();
+                    }
+                    row.appendChild(gainCell);
+
+                    var stateCell = document.createElement('td');
+                    stateCell.appendChild(loudnessStateIcon(movie.state, movie.failureReason));
+                    row.appendChild(stateCell);
+
+                    var rescanCell = document.createElement('td');
+                    rescanCell.appendChild(makeLoudnessRescanButton('Movies', movie.movieId, 'movie'));
+                    row.appendChild(rescanCell);
+
+                    tbody.appendChild(row);
+                });
+                table.appendChild(tbody);
+                return table;
+            }
+
+            function makeLoudnessRescanButton(kind, id, label) {
+                // innerHTML, not createElement(tag, { is }): the webcomponents polyfill's
+                // createElement shim throws on the options object (t.toLowerCase).
+                var host = document.createElement('div');
+                host.innerHTML = '<button is="emby-button" type="button" class="raised"><span>Rescan</span></button>';
+                var btn = host.firstChild;
+                btn.style.cssText = 'margin:0;min-height:0;padding:0.25em 0.9em;';
+                btn.title = 'Force re-measurement of this ' + label;
+                btn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    rescanLoudnessScope(kind, id, label);
+                });
+                return btn;
+            }
+
+            function rescanLoudnessScope(kind, id, label) {
+                // The server measures every video in scope before responding (no queue, no caps),
+                // so the response IS the per-item outcome list — a whole series can take a while.
+                loudnessProgress.setProgress(null, 'Scanning ' + label + ' \u2014 measuring every video, one at a time\u2026');
+                ajaxPost(ApiClient.getUrl('KoalaPaw/Loudness/' + kind + '/' + id + '/Rescan')).then(function (result) {
+                    loudnessProgress.setProgress(null, 'Scan finished \u2014 ' + result.succeeded + '/' + result.scanned +
+                        ' measured. Reopen the ' + label + ' for details.');
+                    Dashboard.processPluginConfigurationUpdateResult();
+                    refreshLoudness();
+                }).catch(function (err) {
+                    console.warn('KoalaPaw: loudness rescan failed', err);
+                    loudnessProgress.setProgress(null, 'Rescan failed.');
+                });
+            }
+
+            function refreshLoudness() {
+                loadLoudnessSummary();
+                loadLoudnessLibraries(page.querySelector('#loudnessTree'));
+            }
+
+            // ================= page lifecycle =================
 
             page.addEventListener('pageshow', function () {
-                stopProgressPolling();
-                sawRunning = false;
-                idlePolls = 0;
-                loadSummary();
-                loadTree();
-                checkRunningTask();
+                segmentsProgress.stop();
+                loudnessProgress.stop();
+                refreshSegments();
+                refreshLoudness();
+                segmentsProgress.checkRunning();
+                loudnessProgress.checkRunning();
             });
 
             page.querySelector('#scanSegmentsNow').addEventListener('click', function () {
                 ajaxPost(ApiClient.getUrl('KoalaPaw/Scan/Segments')).then(function () {
-                    startWatching('Scan queued \u2014 waiting for it to start\u2026');
+                    segmentsProgress.startWatching('Scan queued \u2014 waiting for it to start\u2026');
                     Dashboard.processPluginConfigurationUpdateResult();
                 }).catch(function () {
-                    setProgress(null, 'Failed to queue the scan.');
+                    segmentsProgress.setProgress(null, 'Failed to queue the scan.');
+                });
+            });
+
+            page.querySelector('#scanLoudnessNow').addEventListener('click', function () {
+                ajaxPost(ApiClient.getUrl('KoalaPaw/Scan/Loudness')).then(function () {
+                    loudnessProgress.startWatching('Scan queued \u2014 waiting for it to start\u2026');
+                    Dashboard.processPluginConfigurationUpdateResult();
+                }).catch(function () {
+                    loudnessProgress.setProgress(null, 'Failed to queue the scan.');
                 });
             });
         })();

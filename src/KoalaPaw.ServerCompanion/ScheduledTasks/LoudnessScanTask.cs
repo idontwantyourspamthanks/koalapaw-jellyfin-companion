@@ -84,13 +84,20 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
         // IncludeItemTypes must be set in the query — a bare Recursive scan asks the repo to
         // deserialize every BaseItems row, and unknown/orphaned types throw
         // "Cannot deserialize unknown type" before we can filter in-process.
-        var candidates = _libraryManager.GetItemList(new InternalItemsQuery
+        var allVideos = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = [BaseItemKind.Episode, BaseItemKind.Movie],
                 Recursive = true,
                 IsVirtualItem = false,
             })
-            .Where(i => i.NormalizationGain is null && !string.IsNullOrWhiteSpace(i.Path))
+            .Where(i => !string.IsNullOrWhiteSpace(i.Path))
+            .ToList();
+
+        // Forget outcome records for items that no longer exist in the library.
+        _analysisStore.PruneLoudnessRecordsExcept(allVideos.Select(v => v.Id).ToList());
+
+        var candidates = allVideos
+            .Where(i => i.NormalizationGain is null)
             .Take(maxItems)
             .ToList();
 
@@ -118,40 +125,17 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
                 continue;
             }
 
-            try
+            var record = await MeasureAndApplyAsync(
+                    _probe,
+                    _libraryManager,
+                    _analysisStore,
+                    _logger,
+                    item,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (record.Gain is not null)
             {
-                var gain = await _probe.MeasureNormalizationGainAsync(item.Path, cancellationToken)
-                    .ConfigureAwait(false);
-                if (gain is null)
-                {
-                    _logger.LogWarning("LoudnessScan: no measurement for {Name} ({Id})", item.Name, item.Id);
-                    _analysisStore.RecordFailure(item.Id, "loudness", "loudnorm returned no result");
-                }
-                else
-                {
-                    item.NormalizationGain = gain;
-                    var parent = _libraryManager.GetItemById(item.ParentId) ?? item;
-                    await _libraryManager.UpdateItemAsync(
-                        item,
-                        parent,
-                        ItemUpdateType.MetadataEdit,
-                        cancellationToken).ConfigureAwait(false);
-                    ok++;
-                    _logger.LogInformation(
-                        "LoudnessScan: {Name} ({Id}) NormalizationGain={Gain}",
-                        item.Name,
-                        item.Id,
-                        gain.Value.ToString("0.###", CultureInfo.InvariantCulture));
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "LoudnessScan: failed for {Name} ({Id})", item.Name, item.Id);
-                _analysisStore.RecordFailure(item.Id, "loudness", ex.Message);
+                ok++;
             }
 
             done++;
@@ -165,6 +149,76 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
             skippedFailed);
         progress.Report(100);
     }
+
+    /// <summary>
+    /// Measure one video and apply the outcome: writes <see cref="BaseItem.NormalizationGain"/> on
+    /// success (forgetting any earlier failure), records a loudness failure otherwise, and always
+    /// persists the per-item outcome record the dashboard reads. Shared by the scheduled task and
+    /// the on-demand rescan endpoints so both write identical outcomes. A rescan passes
+    /// CancellationToken.None deliberately — a disconnecting client must not abort measurement.
+    /// </summary>
+    internal static async Task<AnalysisStore.LoudnessScanRecord> MeasureAndApplyAsync(
+        LoudnessProbe probe,
+        ILibraryManager libraryManager,
+        AnalysisStore store,
+        ILogger logger,
+        BaseItem item,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var gain = await probe.MeasureNormalizationGainAsync(item.Path, cancellationToken)
+                .ConfigureAwait(false);
+            if (gain is null)
+            {
+                logger.LogWarning("LoudnessScan: no measurement for {Name} ({Id})", item.Name, item.Id);
+                store.RecordFailure(item.Id, "loudness", "loudnorm returned no result");
+                return ToScanRecord(item.Id, null, "loudnorm returned no result", DateTime.UtcNow);
+            }
+
+            item.NormalizationGain = gain;
+            var parent = libraryManager.GetItemById(item.ParentId) ?? item;
+            await libraryManager.UpdateItemAsync(
+                item,
+                parent,
+                ItemUpdateType.MetadataEdit,
+                cancellationToken).ConfigureAwait(false);
+            store.RemoveFailure(item.Id, "loudness"); // a successful measurement invalidates earlier failures
+            logger.LogInformation(
+                "LoudnessScan: {Name} ({Id}) NormalizationGain={Gain}",
+                item.Name,
+                item.Id,
+                gain.Value.ToString("0.###", CultureInfo.InvariantCulture));
+            return ToScanRecord(item.Id, gain, null, DateTime.UtcNow);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "LoudnessScan: failed for {Name} ({Id})", item.Name, item.Id);
+            store.RecordFailure(item.Id, "loudness", ex.Message);
+            return ToScanRecord(item.Id, null, ex.Message, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>
+    /// Maps one item's measurement to the persisted outcome record. Extracted as a static so the
+    /// success/failure derivation is unit-testable without Jellyfin plumbing or a real ffmpeg.
+    /// </summary>
+    internal static AnalysisStore.LoudnessScanRecord ToScanRecord(
+        Guid itemId,
+        float? gain,
+        string? failureReason,
+        DateTime finishedUtc) =>
+        new()
+        {
+            ItemId = itemId,
+            Gain = gain,
+            FailureReason = failureReason,
+            FinishedUtc = finishedUtc,
+        };
 
     /// <summary>Runs automatically after every library scan.</summary>
     public Task Run(IProgress<double> progress, CancellationToken cancellationToken) =>
