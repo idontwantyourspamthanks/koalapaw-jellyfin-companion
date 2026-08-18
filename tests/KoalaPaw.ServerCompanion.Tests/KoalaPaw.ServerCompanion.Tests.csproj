@@ -17,6 +17,9 @@
     <!-- Same for MediaBrowser.Controller: SeasonAnalysisResult is nested in IntroSeasonAnalyser,
          so the mapping tests load it and need the controller assembly at runtime. -->
     <PackageReference Include="Jellyfin.Controller" Version="10.11.11" />
+    <!-- Same for Jellyfin.Database.Implementations: DirectoryController tests construct User
+         entities to exercise the listed-users filtering. -->
+    <PackageReference Include="Jellyfin.Database.Implementations" Version="10.11.11" />
   </ItemGroup>
 
   <ItemGroup>

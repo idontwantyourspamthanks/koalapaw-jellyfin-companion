@@ -12,6 +12,7 @@ public class PluginConfigurationTests
 
         Assert.True(config.LoudnessEnabled);
         Assert.True(config.SegmentDetectionEnabled);
+        Assert.Empty(config.ListedUsers);
         Assert.Equal(-18f, config.TargetLufs);
         Assert.Equal(40, config.MaxLoudnessItemsPerRun);
         Assert.Equal(200, config.FingerprintHeadSeconds);

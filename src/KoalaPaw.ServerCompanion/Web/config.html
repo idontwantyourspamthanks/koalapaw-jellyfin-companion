@@ -6,7 +6,7 @@
 </head>
 <body>
     <div id="KoalaPawConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
-         data-require="emby-input,emby-button,emby-checkbox">
+         data-require="emby-input,emby-button,emby-checkbox,emby-select">
         <div data-role="content">
             <div class="content-primary">
                 <form id="KoalaPawConfigForm">
@@ -68,6 +68,16 @@
                     </div>
 
                     <div class="verticalSection">
+                        <h3 class="sectionTitle">Listed Users</h3>
+                        <div class="fieldDescription">
+                            Users ticked here appear on the KoalaPaw TV sign-in picker without any
+                            login. Only users without a password can be listed, and they are shown
+                            by name, kid flag and avatar only.
+                        </div>
+                        <div id="listedUsersContainer"></div>
+                    </div>
+
+                    <div class="verticalSection">
                         <h3 class="sectionTitle">Failure Log</h3>
                         <p>Tracked analysis failures: <strong id="failureCount">?</strong></p>
                         <div id="failureList"></div>
@@ -97,6 +107,60 @@
                     page.querySelector('#maxLoudnessItemsPerRun').value = config.MaxLoudnessItemsPerRun;
                     page.querySelector('#fingerprintHeadSeconds').value = config.FingerprintHeadSeconds;
                     page.querySelector('#fingerprintTailSeconds').value = config.FingerprintTailSeconds;
+                    page.querySelector('#listedUsersContainer').setAttribute('data-listed', JSON.stringify(config.ListedUsers || []));
+                    loadUsers(page);
+                });
+            }
+
+            // Mirrors AvatarPresets in koalapaw-androidtv (app/src/main/kotlin/com/koalapaw/tv/ui/IdentityTile.kt).
+            var avatarPresets = ['🐨', '🐼', '🐯', '🐸', '🐙', '🐬', '🐢', '🐝', '🐊', '🐵', '🐰', '🐻'];
+            var defaultAvatar = '🐨';
+
+            function findEntry(entries, userId) {
+                for (var i = 0; i < entries.length; i++) {
+                    if (entries[i].UserId === userId) {
+                        return entries[i];
+                    }
+                }
+                return null;
+            }
+
+            function loadUsers(page) {
+                ApiClient.getUsers().then(function (users) {
+                    var container = page.querySelector('#listedUsersContainer');
+                    var entries = JSON.parse(container.getAttribute('data-listed') || '[]');
+                    container.innerHTML = '';
+                    users.forEach(function (user) {
+                        // innerHTML, not createElement(tag, { is }): the webcomponents polyfill's
+                        // createElement shim throws on the options object (same as the failure list).
+                        var host = document.createElement('div');
+                        host.innerHTML =
+                            '<div class="listedUserRow" style="display:flex;align-items:center;gap:0.75em;margin:0.5em 0;">' +
+                                '<label class="checkboxContainer">' +
+                                    '<input type="checkbox" is="emby-checkbox" id="listedUser-CB-' + user.Id + '" />' +
+                                    '<span></span>' +
+                                '</label>' +
+                                '<select is="emby-select" id="listedUser-KID-' + user.Id + '" style="width:auto;">' +
+                                    '<option value="false">Grown-up</option>' +
+                                    '<option value="true">Kid</option>' +
+                                '</select>' +
+                                '<select is="emby-select" id="listedUser-AVATAR-' + user.Id + '" style="width:auto;">' +
+                                    avatarPresets.map(function (avatar) {
+                                        return '<option value="' + avatar + '">' + avatar + '</option>';
+                                    }).join('') +
+                                '</select>' +
+                            '</div>';
+                        var row = host.firstChild;
+                        row.querySelector('span').textContent = user.Name;
+                        var entry = findEntry(entries, user.Id);
+                        var selects = row.querySelectorAll('select');
+                        row.querySelector('input').checked = entry !== null;
+                        selects[0].value = entry && entry.Kid ? 'true' : 'false';
+                        selects[1].value = entry && avatarPresets.indexOf(entry.Avatar) !== -1 ? entry.Avatar : defaultAvatar;
+                        container.appendChild(row);
+                    });
+                }).catch(function () {
+                    page.querySelector('#listedUsersContainer').innerHTML = '';
                 });
             }
 
@@ -191,6 +255,21 @@
                     config.MaxLoudnessItemsPerRun = parseInt(page.querySelector('#maxLoudnessItemsPerRun').value, 10);
                     config.FingerprintHeadSeconds = parseInt(page.querySelector('#fingerprintHeadSeconds').value, 10);
                     config.FingerprintTailSeconds = parseInt(page.querySelector('#fingerprintTailSeconds').value, 10);
+                    config.ListedUsers = [];
+                    Array.prototype.forEach.call(
+                        page.querySelectorAll('#listedUsersContainer .listedUserRow'),
+                        function (row) {
+                            var checkbox = row.querySelector('input[type="checkbox"]');
+                            if (!checkbox.checked) {
+                                return;
+                            }
+                            var selects = row.querySelectorAll('select');
+                            config.ListedUsers.push({
+                                UserId: checkbox.id.replace('listedUser-CB-', ''),
+                                Kid: selects[0].value === 'true',
+                                Avatar: selects[1].value
+                            });
+                        });
 
                     ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
