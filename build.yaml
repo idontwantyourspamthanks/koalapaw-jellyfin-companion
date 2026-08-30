@@ -1,9 +1,9 @@
 name: "KoalaPaw Server Companion"
 guid: "cea40e65-c04f-4854-b6c4-3428360087fe"
-version: "0.0.12.1"
+version: "0.0.13.1"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
-overview: "Skip intros and even out video loudness for KoalaPaw (and any Jellyfin client)."
+overview: "Skip intros, even out video loudness, and cut TV theme extras from detected intros for KoalaPaw (and any Jellyfin client)."
 description: >
   Open-source Jellyfin companion for KoalaPaw. Analyses your library in the
   background and writes standard Jellyfin fields (NormalizationGain, MediaSegments)
@@ -13,6 +13,8 @@ owner: "koalapaw"
 artifacts:
   - "KoalaPaw.ServerCompanion.dll"
 changelog: >
+  0.0.13.1 — TV theme extras from detected intros: after a confident intro, the scan cuts a short sting (up to 20s) from that opening into theme.mp3 on the series folder so KoalaPaw TV can loop it. Existing intros are backfilled. Skips folders that already have theme.* or theme-music/. Films are unchanged. Supersedes 0.0.13.0.
+  0.0.13.0 — Withdrawn; use 0.0.13.1.
   0.0.12.1 — Listed users now carry the admin's kid/grown-up designation and avatar pick (per-user dropdowns on the config page), so the TV adds them with the right profile mode and icon.
   0.0.12.0 — First-run directory for the TV app: anonymous GET /KoalaPaw/Info (presence + version) and GET /KoalaPaw/ListedUsers (admin-ticked, password-free users by name and id) so a TV with no login can detect the companion and offer one-tap sign-in.
   0.0.11.5 — Rescan analysis is no longer tied to the HTTP request: closing the tab mid-scan no longer aborts it half-staged; the outcome is always recorded.

@@ -27,7 +27,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override Guid Id => PluginGuid;
 
     public override string Description =>
-        "Skip intros and even out video loudness. Writes standard Jellyfin NormalizationGain and MediaSegments.";
+        "Skip intros, even out video loudness, and cut a TV theme extra from a detected intro. Writes standard Jellyfin NormalizationGain, MediaSegments, and theme.mp3.";
 
     public static Plugin? Instance { get; private set; }
 

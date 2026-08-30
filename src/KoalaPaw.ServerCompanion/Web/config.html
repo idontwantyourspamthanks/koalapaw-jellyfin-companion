@@ -27,6 +27,11 @@
                             <input type="checkbox" is="emby-checkbox" id="segmentDetectionEnabled" />
                             <span>Enable intro/credits detection</span>
                         </label>
+                        <div class="fieldDescription">
+                            When an intro is found, a short sting is also cut from that opening into
+                            theme.mp3 on the series folder (skipped if a theme extra is already there).
+                            Films are not given a theme this way.
+                        </div>
 
                         <div style="margin-top: 1em; display: flex; gap: 0.5em;">
                             <button is="emby-button" type="button" id="scanLoudness" class="raised block">

@@ -13,7 +13,11 @@ Everything runs on the server against your existing library — no external serv
   that don’t have one yet.
 - **Intro & credits scan** — chromaprint-fingerprints episode openings and endings, correlates a
   season’s episodes, and writes Jellyfin `Intro`/`Outro` MediaSegments when it’s confident (it emits
-  nothing on weak matches).
+  nothing on weak matches). When an intro is found, it also cuts a short sting (up to 20 seconds)
+  from that opening into `theme.mp3` on the series folder so KoalaPaw TV can loop it — skipped if
+  `theme.*` or `theme-music/` is already there. Movies and collections are not given a theme this
+  way. The audio is always from an episode already on the server; there are still **zero outbound
+  network calls**.
 
 Both run as scheduled tasks (daily + interval), incrementally — items/seasons that already have
 results are skipped — one ffmpeg at a time at below-normal priority so a Pi stays usable.
@@ -68,7 +72,8 @@ origin. The Android client will eventually write that URL via the “do it for t
 src/KoalaPaw.ServerCompanion/
   Configuration/                # plugin configuration
   Loudness/                     # LoudnessProbe — ffmpeg loudnorm → NormalizationGain
-  ScheduledTasks/               # loudness scan, intro/credits scan, heartbeat
+  ThemeSongs/                   # cut theme.mp3 from a detected intro (no network)
+  ScheduledTasks/               # loudness scan, intro/credits scan (+ theme backfill), heartbeat
   Segments/                     # chromaprint probe, intro/outro correlation, segment provider
 scripts/package.sh              # build DLL + zip + manifest (changelog from build.yaml)
 scripts/publish-pi.sh           # rsync to hopto web root

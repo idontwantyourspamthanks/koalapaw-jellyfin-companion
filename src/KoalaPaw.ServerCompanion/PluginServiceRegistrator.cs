@@ -19,6 +19,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Segments.ChromaprintProbe>();
         serviceCollection.AddSingleton<Segments.IntroSeasonAnalyser>();
         serviceCollection.AddSingleton<Loudness.LoudnessProbe>();
+        serviceCollection.AddSingleton<ThemeSongs.ThemeFromIntroExtractor>();
         serviceCollection.AddSingleton<Recommendations.RecommendationService>();
         serviceCollection.AddSingleton<AnalysisStore>(sp =>
         {
