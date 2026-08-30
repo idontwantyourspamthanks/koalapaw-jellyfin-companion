@@ -43,24 +43,59 @@ public class RecommendationsController : ControllerBase
     public ActionResult<RecommendationsResponse> GetRecommendations(Guid userId)
     {
         var caller = GetCaller();
+        var target = _userManager.GetUserById(userId);
+
+        return AccessFor(caller, target) switch
+        {
+            RecommendationAccess.Unauthorized => Unauthorized(),
+            RecommendationAccess.NotFound => NotFound(),
+            RecommendationAccess.Forbidden => Forbid(),
+            _ => Ok(new RecommendationsResponse { Rails = _service.GetRecommendations(target!) }),
+        };
+    }
+
+    /// <summary>Status-code decision for reading one user's recommendation rails.</summary>
+    public enum RecommendationAccess
+    {
+        /// <summary>No usable caller identity on the request — HTTP 401.</summary>
+        Unauthorized,
+
+        /// <summary>The requested user id does not exist — HTTP 404.</summary>
+        NotFound,
+
+        /// <summary>Authenticated non-admin asking for another user's rails — HTTP 403.</summary>
+        Forbidden,
+
+        /// <summary>Own rails, or an admin reading any user's — HTTP 200.</summary>
+        Allowed,
+    }
+
+    /// <summary>
+    /// The self-vs-admin access decision behind GetRecommendations, extracted as a pure static so
+    /// the 401/403/404 truth table (including 404-before-403 precedence for unknown targets) is
+    /// unit-testable without Jellyfin plumbing (the claims principal and IAuthorizationContext
+    /// have no test fakes in this repo). Precedence: caller identity first, then target
+    /// existence, then the self-vs-admin rule.
+    /// </summary>
+    internal static RecommendationAccess AccessFor(User? caller, User? target)
+    {
         if (caller is null)
         {
-            return Unauthorized();
+            return RecommendationAccess.Unauthorized;
         }
 
-        var target = _userManager.GetUserById(userId);
         if (target is null)
         {
-            return NotFound();
+            return RecommendationAccess.NotFound;
         }
 
         // Non-admins may only request their own rails.
-        if (!caller.HasPermission(PermissionKind.IsAdministrator) && !caller.Id.Equals(userId))
+        if (!caller.HasPermission(PermissionKind.IsAdministrator) && !caller.Id.Equals(target.Id))
         {
-            return Forbid();
+            return RecommendationAccess.Forbidden;
         }
 
-        return Ok(new RecommendationsResponse { Rails = _service.GetRecommendations(target) });
+        return RecommendationAccess.Allowed;
     }
 
     private User? GetCaller()

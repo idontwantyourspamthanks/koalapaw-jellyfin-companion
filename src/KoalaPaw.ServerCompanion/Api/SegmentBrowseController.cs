@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
 using KoalaPaw.ServerCompanion.Bookkeeping;
 using KoalaPaw.ServerCompanion.ScheduledTasks;
 using KoalaPaw.ServerCompanion.Segments;
+using KoalaPaw.ServerCompanion.ThemeSongs;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -32,17 +34,20 @@ public class SegmentBrowseController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IMediaSegmentManager _segments;
     private readonly IntroSeasonAnalyser _analyser;
+    private readonly ThemeFromIntroExtractor _themeExtractor;
 
     public SegmentBrowseController(
         AnalysisStore store,
         ILibraryManager libraryManager,
         IMediaSegmentManager segments,
-        IntroSeasonAnalyser analyser)
+        IntroSeasonAnalyser analyser,
+        ThemeFromIntroExtractor themeExtractor)
     {
         _store = store;
         _libraryManager = libraryManager;
         _segments = segments;
         _analyser = analyser;
+        _themeExtractor = themeExtractor;
     }
 
     /// <summary>Per-library episode rollups plus the last scan's finish time.</summary>
@@ -51,25 +56,7 @@ public class SegmentBrowseController : ControllerBase
     public async Task<ActionResult<SegmentOverviewDto>> GetOverview()
     {
         var statuses = await GetEpisodeStatusesAsync().ConfigureAwait(false);
-        var libraries = statuses
-            .Where(s => s.Library is not null)
-            .GroupBy(s => s.Library!.Id)
-            .Select(g =>
-            {
-                var counts = EpisodeSegmentState.Count(g.Select(s => s.State));
-                return new LibrarySummaryDto
-                {
-                    LibraryId = g.Key,
-                    Name = g.First().Library!.Name,
-                    Episodes = counts.Total,
-                    Detected = counts.Detected,
-                    Partial = counts.Partial,
-                    Failed = counts.Failed,
-                    NotScanned = counts.NotScanned,
-                };
-            })
-            .OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var libraries = SegmentBrowseLogic.GroupLibraries(statuses);
 
         var report = _store.GetSegmentScanReport();
         return Ok(new SegmentOverviewDto
@@ -85,25 +72,7 @@ public class SegmentBrowseController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<SeriesSummaryDto>>> GetSeries(Guid libraryId)
     {
         var statuses = await GetEpisodeStatusesAsync(libraryId).ConfigureAwait(false);
-        var series = statuses
-            .Where(s => s.Library?.Id == libraryId)
-            .GroupBy(s => s.Series?.Id ?? s.Season.ParentId)
-            .Select(g =>
-            {
-                var counts = EpisodeSegmentState.Count(g.Select(s => s.State));
-                return new SeriesSummaryDto
-                {
-                    SeriesId = g.Key,
-                    Name = g.First().Series?.Name,
-                    Episodes = counts.Total,
-                    Detected = counts.Detected,
-                    Partial = counts.Partial,
-                    Failed = counts.Failed,
-                    NotScanned = counts.NotScanned,
-                };
-            })
-            .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var series = SegmentBrowseLogic.GroupSeries(libraryId, statuses);
         return Ok(series);
     }
 
@@ -113,31 +82,10 @@ public class SegmentBrowseController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<SeasonSummaryDto>>> GetSeasons(Guid seriesId)
     {
         var statuses = await GetEpisodeStatusesAsync(seriesId).ConfigureAwait(false);
-        var seasons = statuses
-            .Where(s => (s.Series?.Id ?? s.Season.ParentId) == seriesId)
-            .GroupBy(s => s.Season.Id)
-            .Select(g =>
-            {
-                var counts = EpisodeSegmentState.Count(g.Select(s => s.State));
-                return new SeasonSummaryDto
-                {
-                    SeasonId = g.Key,
-                    Name = g.First().Season.Name,
-                    IndexNumber = g.First().Season.IndexNumber,
-                    Episodes = counts.Total,
-                    Detected = counts.Detected,
-                    Partial = counts.Partial,
-                    Failed = counts.Failed,
-                    NotScanned = counts.NotScanned,
-                    Scan = ToScanDto(_store.GetSeasonScanRecord(g.Key)),
-                    // One reason speaks for the tier: per-episode reasons are nearly always the
-                    // same message, and the episode table carries them individually anyway.
-                    FailureReason = g.Select(s => s.FailureReason).FirstOrDefault(r => r is not null),
-                };
-            })
-            .OrderBy(s => s.IndexNumber)
-            .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var seasons = SegmentBrowseLogic.GroupSeasons(
+            seriesId,
+            statuses,
+            seasonId => _store.GetSeasonScanRecord(seasonId));
         return Ok(seasons);
     }
 
@@ -148,26 +96,7 @@ public class SegmentBrowseController : ControllerBase
     {
         var statuses = await GetEpisodeStatusesAsync(seasonId).ConfigureAwait(false);
         var scan = _store.GetSeasonScanRecord(seasonId);
-        var episodes = statuses
-            .Where(s => s.Season.Id == seasonId)
-            .OrderBy(s => s.Episode.IndexNumber)
-            .ThenBy(s => s.Episode.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(s => new EpisodeDto
-            {
-                EpisodeId = s.Episode.Id,
-                IndexNumber = s.Episode.IndexNumber,
-                Name = s.Episode.Name,
-                RuntimeSeconds = s.Episode.RunTimeTicks.HasValue
-                    ? s.Episode.RunTimeTicks.Value / (double)TimeSpan.TicksPerSecond
-                    : null,
-                State = s.State,
-                Intro = ToWindowDto(s.Intro),
-                Outro = ToWindowDto(s.Outro),
-                FailureReason = s.FailureReason,
-                IntroConfidence = scan?.IntroConfidence,
-                OutroConfidence = scan?.OutroConfidence,
-            })
-            .ToList();
+        var episodes = SegmentBrowseLogic.GroupEpisodes(seasonId, statuses, scan);
         return Ok(episodes);
     }
 
@@ -214,14 +143,33 @@ public class SegmentBrowseController : ControllerBase
         var record = SegmentScanTask.ToSeasonScanRecord(seasonId, seriesId, DateTime.UtcNow, result);
         _store.SetSeasonScanRecord(record);
 
-        return Ok(ToScanDto(record));
+        if (result.Intro is { } intro)
+        {
+            var episode = episodes.OfType<Episode>().FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.Path));
+            var series = seriesId == Guid.Empty ? null : _libraryManager.GetItemById(seriesId) as Series;
+            if (episode is not null && series is not null)
+            {
+                _store.RemoveFailure(series.Id, ThemeFromIntroExtractor.AnalyserName);
+                var endTicks = (long)(intro.EndSeconds * TimeSpan.TicksPerSecond);
+                var extract = await _themeExtractor.ExtractAsync(
+                        series.Path,
+                        episode.Path,
+                        0,
+                        endTicks,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+                SegmentScanTask.RememberThemeOutcome(_store, series.Id, extract);
+            }
+        }
+
+        return Ok(SegmentBrowseLogic.ToScanDto(record));
     }
 
     /// <summary>
     /// Episode segment ground truth for the tier's subtree (Guid.Empty = every library), with
     /// ancestors and state resolved once so the tier rollups agree with the episode list.
     /// </summary>
-    private async Task<IReadOnlyList<EpisodeStatus>> GetEpisodeStatusesAsync(Guid parentId = default)
+    private async Task<IReadOnlyList<SegmentBrowseLogic.EpisodeRow>> GetEpisodeStatusesAsync(Guid parentId = default)
     {
         var episodes = _libraryManager.GetItemList(new InternalItemsQuery
             {
@@ -243,7 +191,7 @@ public class SegmentBrowseController : ControllerBase
             }
         }
 
-        var statuses = new List<EpisodeStatus>(episodes.Count);
+        var statuses = new List<SegmentBrowseLogic.EpisodeRow>(episodes.Count);
         foreach (var episode in episodes)
         {
             var season = episode.ParentId == Guid.Empty ? null : _libraryManager.GetItemById(episode.ParentId);
@@ -266,63 +214,27 @@ public class SegmentBrowseController : ControllerBase
             var outro = existing.FirstOrDefault(s => s.Type == MediaSegmentType.Outro);
             var hasFailure = failuresByItem.TryGetValue(episode.Id, out var failureReason);
 
-            statuses.Add(new EpisodeStatus(
-                episode,
-                season,
-                series,
-                library,
-                intro,
-                outro,
+            statuses.Add(new SegmentBrowseLogic.EpisodeRow(
+                episode.Id,
+                episode.IndexNumber,
+                episode.Name,
+                episode.RunTimeTicks,
+                library?.Id,
+                library?.Name,
+                series?.Id,
+                series?.Name,
+                season.Id,
+                season.ParentId,
+                season.Name,
+                season.IndexNumber,
+                EpisodeSegmentState.Derive(intro is not null, outro is not null, hasFailure),
                 hasFailure ? failureReason : null,
-                EpisodeSegmentState.Derive(intro is not null, outro is not null, hasFailure)));
+                intro,
+                outro));
         }
 
         return statuses;
     }
-
-    private static SeasonScanDto? ToScanDto(AnalysisStore.SeasonScanRecord? record)
-    {
-        if (record is null)
-        {
-            return null;
-        }
-
-        return new SeasonScanDto
-        {
-            FinishedUtc = record.FinishedUtc,
-            Outcome = record.Outcome.ToString(),
-            EpisodesSampled = record.EpisodesSampled,
-            IntroEndSeconds = record.IntroEndSeconds,
-            IntroConfidence = record.IntroConfidence,
-            OutroLengthSeconds = record.OutroLengthSeconds,
-            OutroConfidence = record.OutroConfidence,
-        };
-    }
-
-    private static SegmentWindowDto? ToWindowDto(MediaSegmentDto? segment)
-    {
-        if (segment is null)
-        {
-            return null;
-        }
-
-        return new SegmentWindowDto
-        {
-            StartSeconds = segment.StartTicks / (double)TimeSpan.TicksPerSecond,
-            EndSeconds = segment.EndTicks / (double)TimeSpan.TicksPerSecond,
-        };
-    }
-
-    /// <summary>One episode's segment ground truth plus its resolved ancestors, as the browse tiers see it.</summary>
-    private sealed record EpisodeStatus(
-        Episode Episode,
-        BaseItem Season,
-        BaseItem? Series,
-        Folder? Library,
-        MediaSegmentDto? Intro,
-        MediaSegmentDto? Outro,
-        string? FailureReason,
-        string State);
 
     public sealed class SegmentOverviewDto
     {

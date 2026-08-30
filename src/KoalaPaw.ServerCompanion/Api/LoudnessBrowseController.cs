@@ -70,7 +70,7 @@ public class LoudnessBrowseController : ControllerBase
 
         return Ok(new LoudnessOverviewDto
         {
-            LastScanUtc = MaxFinishedUtc(statuses.Select(s => s.FinishedUtc))?.ToUniversalTime().ToString("O"),
+            LastScanUtc = LoudnessBrowseLogic.MaxFinishedUtc(statuses.Select(s => s.FinishedUtc))?.ToUniversalTime().ToString("O"),
             Libraries = libraries,
         });
     }
@@ -116,7 +116,7 @@ public class LoudnessBrowseController : ControllerBase
                     // One reason speaks for the tier: per-episode reasons are nearly always the
                     // same message, and the episode table carries them individually anyway.
                     FailureReason = grouped.Select(s => s.FailureReason).FirstOrDefault(r => r is not null),
-                    LastScanUtc = MaxFinishedUtc(grouped.Select(s => s.FinishedUtc))?.ToUniversalTime().ToString("O"),
+                    LastScanUtc = LoudnessBrowseLogic.MaxFinishedUtc(grouped.Select(s => s.FinishedUtc))?.ToUniversalTime().ToString("O"),
                 };
             })
             .OrderBy(s => s.IndexNumber)
@@ -335,19 +335,16 @@ public class LoudnessBrowseController : ControllerBase
             var library = _libraryManager.GetCollectionFolders(item).FirstOrDefault();
 
             var record = _store.GetLoudnessScanRecord(item.Id);
-            var gain = item.NormalizationGain ?? record?.Gain;
-            var failureReason = failuresByItem.TryGetValue(item.Id, out var recorded)
-                ? recorded
-                : record?.FailureReason;
+            var status = LoudnessBrowseLogic.ResolveItemStatus(item.Id, failuresByItem, item.NormalizationGain, record);
 
             statuses.Add(new LoudnessItemStatus(
                 item,
                 season,
                 series,
                 library,
-                LoudnessItemState.Derive(hasGain: gain is not null, hasFailure: failureReason is not null),
-                gain,
-                failureReason,
+                status.State,
+                status.Gain,
+                status.FailureReason,
                 record?.FinishedUtc));
         }
 
@@ -362,12 +359,6 @@ public class LoudnessBrowseController : ControllerBase
             Failed = counts.Failed,
             NotScanned = counts.NotScanned,
         };
-
-    private static DateTime? MaxFinishedUtc(IEnumerable<DateTime?> values)
-    {
-        var max = values.Where(v => v is not null).Select(v => v!.Value).DefaultIfEmpty().Max();
-        return max == default ? null : max;
-    }
 
     /// <summary>One item's loudness ground truth plus its resolved ancestors, as the browse tiers see it.</summary>
     private sealed record LoudnessItemStatus(

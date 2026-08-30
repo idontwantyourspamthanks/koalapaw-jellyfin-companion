@@ -44,16 +44,7 @@ public class AnalysisController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<FailureDto>> ListFailures()
     {
-        var failures = _store.GetFailures()
-            .Select(r => new FailureDto
-            {
-                ItemId = r.ItemId,
-                Name = _libraryManager.GetItemById(r.ItemId)?.Name,
-                Analyser = r.Analyser,
-                Reason = r.Reason,
-                Timestamp = r.Timestamp,
-            })
-            .ToList();
+        var failures = ToFailureDtos(_store.GetFailures(), id => _libraryManager.GetItemById(id)?.Name);
         return Ok(failures);
     }
 
@@ -72,13 +63,8 @@ public class AnalysisController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public ActionResult<RetryResult> RetryFailure(Guid itemId, string analyser)
     {
-        Action queue = analyser switch
-        {
-            "loudness" => () => _taskManager.QueueIfNotRunning<LoudnessScanTask>(),
-            "segments" => () => _taskManager.QueueIfNotRunning<SegmentScanTask>(),
-            _ => null!,
-        };
-        if (queue is null)
+        var taskType = RetryScanTaskFor(analyser);
+        if (taskType is null)
         {
             return BadRequest($"Unknown analyser '{analyser}'.");
         }
@@ -88,8 +74,21 @@ public class AnalysisController : ControllerBase
             return NotFound();
         }
 
-        queue();
+        QueueRetryScan(taskType);
         return Accepted(new RetryResult { Retried = true });
+    }
+
+    /// <summary>Queues the scan the analyser maps to (the generic queue API needs the concrete task type).</summary>
+    private void QueueRetryScan(Type taskType)
+    {
+        if (taskType == typeof(LoudnessScanTask))
+        {
+            _taskManager.QueueIfNotRunning<LoudnessScanTask>();
+        }
+        else
+        {
+            _taskManager.QueueIfNotRunning<SegmentScanTask>();
+        }
     }
 
     /// <summary>Queue the incremental loudness scan (batch caps and failure suppression still apply).</summary>
@@ -118,16 +117,59 @@ public class AnalysisController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SegmentScanReportDto> GetSegmentScanReport()
     {
-        var report = _store.GetSegmentScanReport();
-        return Ok(new SegmentScanReportDto
+        return Ok(ToReportDto(_store.GetSegmentScanReport()));
+    }
+
+    /// <summary>
+    /// Maps a recorded analyser name to the scan task that re-analyses the items it failed on —
+    /// theme failures ride the segment scan (theme extraction runs inside it). Extracted as a
+    /// static so the retry switch is unit-testable without Jellyfin plumbing; null for unknown
+    /// names, which the endpoint must reject instead of queueing a scan.
+    /// </summary>
+    internal static Type? RetryScanTaskFor(string analyser) => analyser switch
+    {
+        "loudness" => typeof(LoudnessScanTask),
+        "segments" => typeof(SegmentScanTask),
+        "themes" => typeof(SegmentScanTask),
+        _ => null,
+    };
+
+    /// <summary>
+    /// Maps recorded failures to their read-time DTOs, resolving item names through getItemName
+    /// (null for items deleted since the failure). Extracted as a static with the lookup passed
+    /// in as a delegate, as in DirectoryController.SelectListedUsers, so the mapping is
+    /// unit-testable without Jellyfin plumbing.
+    /// </summary>
+    internal static IReadOnlyList<FailureDto> ToFailureDtos(
+        IEnumerable<AnalysisStore.FailureRecord> failures,
+        Func<Guid, string?> getItemName)
+    {
+        return failures
+            .Select(r => new FailureDto
+            {
+                ItemId = r.ItemId,
+                Name = getItemName(r.ItemId),
+                Analyser = r.Analyser,
+                Reason = r.Reason,
+                Timestamp = r.Timestamp,
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Maps the stored scan report to its API shape; null (no scan has completed yet) becomes all
+    /// zeros per the endpoint contract. Extracted as a static so that contract is unit-testable
+    /// without Jellyfin plumbing.
+    /// </summary>
+    internal static SegmentScanReportDto ToReportDto(AnalysisStore.SegmentScanReport? report) =>
+        new()
         {
             EpisodesScanned = report?.EpisodesScanned ?? 0,
             IntrosFound = report?.IntrosFound ?? 0,
             OutrosFound = report?.OutrosFound ?? 0,
             IntroConfidence = report?.IntroConfidence,
             OutroConfidence = report?.OutroConfidence,
-        });
-    }
+        };
 
     public sealed class SegmentScanReportDto
     {

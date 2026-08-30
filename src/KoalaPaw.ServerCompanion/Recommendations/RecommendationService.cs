@@ -37,10 +37,23 @@ public sealed class RecommendationService
     {
         var seeds = RecommendationEngine.PickSeeds(GetRecentMovieSeeds(user), GetRecentSeriesSeeds(user));
 
+        return SelectRails(seeds, seed => BuildRail(user, seed));
+    }
+
+    /// <summary>
+    /// Builds one rail per picked seed, in seed order, dropping seeds that produced none (e.g.
+    /// their item vanished from the library). Extracted as a delegate-taking static so the
+    /// skip-null rule is unit-testable without Jellyfin plumbing (ILibraryManager has no test
+    /// fakes in this repo).
+    /// </summary>
+    internal static IReadOnlyList<RecommendationRailDto> SelectRails(
+        IReadOnlyList<RecommendationSeed> seeds,
+        Func<RecommendationSeed, RecommendationRailDto?> buildRail)
+    {
         var rails = new List<RecommendationRailDto>(seeds.Count);
         foreach (var seed in seeds)
         {
-            var rail = BuildRail(user, seed);
+            var rail = buildRail(seed);
             if (rail is not null)
             {
                 rails.Add(rail);
@@ -79,19 +92,33 @@ public sealed class RecommendationService
             .OfType<Episode>()
             .ToList();
 
-        return playedEpisodes
-            .GroupBy(episode => episode.SeriesId)
-            .Where(group => !group.Key.Equals(Guid.Empty))
-            .Select(group => new
-            {
-                SeriesId = group.Key,
-                LastPlayedDate = group.Max(episode => GetUserData(episode, user)?.LastPlayedDate),
-            })
-            .Where(result => result.LastPlayedDate.HasValue)
-            .OrderByDescending(result => result.LastPlayedDate)
-            .Take(RecommendationEngine.MaxSeeds)
+        var seriesPlays = RollupSeriesSeeds(playedEpisodes
+            .Select(episode => (SeriesId: episode.SeriesId, LastPlayedDate: GetUserData(episode, user)?.LastPlayedDate)));
+
+        return seriesPlays
             .Select(result => ToSeed(_libraryManager.GetItemById(result.SeriesId), user, result.LastPlayedDate))
             .Where(seed => !seed.Id.Equals(Guid.Empty))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Collapses per-episode play rows into one row per series: rows without a series id and
+    /// series without any played episode are dropped, each series is dated by its newest episode
+    /// play, newest first, capped at <paramref name="maxSeeds"/>. Extracted as a static so the
+    /// rollup is unit-testable without Jellyfin plumbing (ILibraryManager has no test fakes in
+    /// this repo).
+    /// </summary>
+    internal static IReadOnlyList<(Guid SeriesId, DateTime? LastPlayedDate)> RollupSeriesSeeds(
+        IEnumerable<(Guid SeriesId, DateTime? LastPlayedDate)> episodePlays,
+        int maxSeeds = RecommendationEngine.MaxSeeds)
+    {
+        return episodePlays
+            .GroupBy(play => play.SeriesId)
+            .Where(group => !group.Key.Equals(Guid.Empty))
+            .Select(group => (SeriesId: group.Key, LastPlayedDate: group.Max(play => play.LastPlayedDate)))
+            .Where(play => play.LastPlayedDate.HasValue)
+            .OrderByDescending(play => play.LastPlayedDate)
+            .Take(maxSeeds)
             .ToList();
     }
 
@@ -127,19 +154,26 @@ public sealed class RecommendationService
             return [];
         }
 
-        return boxSet.GetLinkedChildren(user)
+        return SelectCollectionCandidates(boxSet.GetLinkedChildren(user), user);
+    }
+
+    /// <summary>
+    /// Shapes a box set's linked children into rail candidates: only playable kinds (movies,
+    /// series, episodes) qualify, kept in the box set's own order. Extracted as a static so the
+    /// kind filter and mapping are unit-testable with directly constructed Jellyfin entities.
+    /// </summary>
+    internal static IReadOnlyList<RecommendationCandidate> SelectCollectionCandidates(
+        IEnumerable<BaseItem> linkedChildren,
+        User user)
+        => linkedChildren
             .Where(item => item is Movie or Series or Episode)
             .Select(item => ToCandidate(item, user))
             .ToList();
-    }
 
     /// <summary>The featured person's other movies and episodes, or nothing when the seed has no credited actors or directors.</summary>
     private IReadOnlyList<RecommendationCandidate> GetPersonCandidates(User user, BaseItem seedItem)
     {
-        var personId = RecommendationEngine.PickFeaturedPerson(
-            _libraryManager.GetPeople(seedItem)
-                .Select(person => new PersonCredit(person.Id, person.Type.ToString()))
-                .ToList());
+        var personId = RecommendationEngine.PickFeaturedPerson(ToPersonCredits(_libraryManager.GetPeople(seedItem)));
         if (!personId.HasValue)
         {
             return [];
@@ -157,6 +191,16 @@ public sealed class RecommendationService
             .ToList();
     }
 
+    /// <summary>
+    /// Bridges Jellyfin's credited people onto the plain credit rows the engine matches on:
+    /// PersonKind becomes its name ("Actor"/"Director"/...), credit order preserved. Extracted as
+    /// a static so the kind-to-name mapping is unit-testable with directly constructed entities.
+    /// </summary>
+    internal static IReadOnlyList<PersonCredit> ToPersonCredits(IEnumerable<PersonInfo> people)
+        => people
+            .Select(person => new PersonCredit(person.Id, person.Type.ToString()))
+            .ToList();
+
     /// <summary>Library items sharing the seed's primary genre (the engine enforces primary-genre equality).</summary>
     private IReadOnlyList<RecommendationCandidate> GetGenreCandidates(User user, string primaryGenre)
     {
@@ -172,7 +216,12 @@ public sealed class RecommendationService
             .ToList();
     }
 
-    private static RecommendationSeed ToSeed(BaseItem? item, User user, DateTime? lastPlayedDate)
+    /// <summary>
+    /// Shapes a library item into a seed record; items deleted from the library collapse to the
+    /// empty sentinel seed (Guid.Empty id) that callers filter out. Internal static so the
+    /// mapping is unit-testable with directly constructed Jellyfin entities.
+    /// </summary>
+    internal static RecommendationSeed ToSeed(BaseItem? item, User user, DateTime? lastPlayedDate)
     {
         if (item is null)
         {
@@ -187,7 +236,12 @@ public sealed class RecommendationService
             item.Genres.FirstOrDefault());
     }
 
-    private static RecommendationCandidate ToCandidate(BaseItem item, User user)
+    /// <summary>
+    /// Shapes a library item into a candidate record, reading play state from the requesting
+    /// user's cached user-data row. Internal static so the mapping is unit-testable with directly
+    /// constructed Jellyfin entities.
+    /// </summary>
+    internal static RecommendationCandidate ToCandidate(BaseItem item, User user)
     {
         var userData = GetUserData(item, user);
         return new RecommendationCandidate(

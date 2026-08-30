@@ -96,10 +96,7 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
         // Forget outcome records for items that no longer exist in the library.
         _analysisStore.PruneLoudnessRecordsExcept(allVideos.Select(v => v.Id).ToList());
 
-        var candidates = allVideos
-            .Where(i => i.NormalizationGain is null)
-            .Take(maxItems)
-            .ToList();
+        var candidates = SelectLoudnessCandidates(allVideos, maxItems);
 
         if (candidates.Count == 0)
         {
@@ -117,7 +114,7 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (_analysisStore.HasFailed(item.Id, "loudness"))
+            if (HasLoudnessFailure(_analysisStore, item.Id))
             {
                 skippedFailed++;
                 done++;
@@ -151,6 +148,26 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
     }
 
     /// <summary>
+    /// Pick this run's candidates: videos without a <see cref="BaseItem.NormalizationGain"/>,
+    /// capped at the configured per-run budget. Items that already have a gain — scanned by an
+    /// earlier run — drop out here. Extracted as a static so the null-gain filter and cap
+    /// boundary are unit-testable without an ILibraryManager.
+    /// </summary>
+    internal static IReadOnlyList<BaseItem> SelectLoudnessCandidates(IEnumerable<BaseItem> videos, int maxItems) =>
+        videos
+            .Where(i => i.NormalizationGain is null)
+            .Take(maxItems)
+            .ToList();
+
+    /// <summary>
+    /// True when the item has a recorded loudness failure and must not be re-measured this run
+    /// (only a successful measurement clears it). Extracted as a static so the
+    /// failure-suppression rule and analyser name stay in one unit-testable place.
+    /// </summary>
+    internal static bool HasLoudnessFailure(AnalysisStore store, Guid itemId) =>
+        store.HasFailed(itemId, "loudness");
+
+    /// <summary>
     /// Measure one video and apply the outcome: writes <see cref="BaseItem.NormalizationGain"/> on
     /// success (forgetting any earlier failure), records a loudness failure otherwise, and always
     /// persists the per-item outcome record the dashboard reads. Shared by the scheduled task and
@@ -172,8 +189,7 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
             if (gain is null)
             {
                 logger.LogWarning("LoudnessScan: no measurement for {Name} ({Id})", item.Name, item.Id);
-                store.RecordFailure(item.Id, "loudness", "loudnorm returned no result");
-                return ToScanRecord(item.Id, null, "loudnorm returned no result", DateTime.UtcNow);
+                return ApplyMeasurementOutcome(store, item.Id, null, "loudnorm returned no result", DateTime.UtcNow);
             }
 
             item.NormalizationGain = gain;
@@ -183,13 +199,12 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
                 parent,
                 ItemUpdateType.MetadataEdit,
                 cancellationToken).ConfigureAwait(false);
-            store.RemoveFailure(item.Id, "loudness"); // a successful measurement invalidates earlier failures
             logger.LogInformation(
                 "LoudnessScan: {Name} ({Id}) NormalizationGain={Gain}",
                 item.Name,
                 item.Id,
                 gain.Value.ToString("0.###", CultureInfo.InvariantCulture));
-            return ToScanRecord(item.Id, gain, null, DateTime.UtcNow);
+            return ApplyMeasurementOutcome(store, item.Id, gain, null, DateTime.UtcNow);
         }
         catch (OperationCanceledException)
         {
@@ -198,8 +213,7 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
         catch (Exception ex)
         {
             logger.LogError(ex, "LoudnessScan: failed for {Name} ({Id})", item.Name, item.Id);
-            store.RecordFailure(item.Id, "loudness", ex.Message);
-            return ToScanRecord(item.Id, null, ex.Message, DateTime.UtcNow);
+            return ApplyMeasurementOutcome(store, item.Id, null, ex.Message, DateTime.UtcNow);
         }
     }
 
@@ -219,6 +233,31 @@ public class LoudnessScanTask : IScheduledTask, ILibraryPostScanTask
             FailureReason = failureReason,
             FinishedUtc = finishedUtc,
         };
+    /// <summary>
+    /// Apply one measurement's outcome to the store and derive the persisted record: a success
+    /// (gain present) clears any earlier failure, a null gain or exception records a loudness
+    /// failure that suppresses retries. Extracted as a static so the apply/update/failure
+    /// decision is unit-testable without Jellyfin plumbing (LoudnessProbe runs a real ffmpeg;
+    /// UpdateItemAsync needs an ILibraryManager).
+    /// </summary>
+    internal static AnalysisStore.LoudnessScanRecord ApplyMeasurementOutcome(
+        AnalysisStore store,
+        Guid itemId,
+        float? gain,
+        string? failureReason,
+        DateTime finishedUtc)
+    {
+        if (failureReason is not null)
+        {
+            store.RecordFailure(itemId, "loudness", failureReason);
+        }
+        else
+        {
+            store.RemoveFailure(itemId, "loudness"); // a successful measurement invalidates earlier failures
+        }
+
+        return ToScanRecord(itemId, gain, failureReason, finishedUtc);
+    }
 
     /// <summary>Runs automatically after every library scan.</summary>
     public Task Run(IProgress<double> progress, CancellationToken cancellationToken) =>
