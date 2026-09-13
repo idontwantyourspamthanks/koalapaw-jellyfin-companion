@@ -29,5 +29,13 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
                 Path.Combine(appPaths.PluginConfigurationsPath, "KoalaPaw Server Companion"),
                 logger);
         });
+        serviceCollection.AddSingleton<WatchParty.WatchPartyStore>(sp =>
+        {
+            var appPaths = sp.GetRequiredService<IApplicationPaths>();
+            var logger = sp.GetRequiredService<ILogger<WatchParty.WatchPartyStore>>();
+            return new WatchParty.WatchPartyStore(
+                Path.Combine(appPaths.PluginConfigurationsPath, "KoalaPaw Server Companion"),
+                logger);
+        });
     }
 }
