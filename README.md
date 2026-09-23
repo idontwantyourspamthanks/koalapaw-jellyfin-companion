@@ -26,28 +26,24 @@ Stable plugin GUID: `cea40e65-c04f-4854-b6c4-3428360087fe` (do not change).
 
 ## Requirements
 
-- .NET 9 SDK (build)
-- Jellyfin **10.11.x** on the server (`targetAbi` `10.11.0.0`)
+- .NET 10 SDK (build)
+- Jellyfin **12.0 or newer** on the server (`targetAbi` `12.0.0.0`)
 - `jellyfin-ffmpeg` configured in Jellyfin (the plugin drives `IMediaEncoder.EncoderPath`)
 - `zip`, `rsync`, `curl` for package/publish scripts
 
-## Dev catalog (your Pi)
+## Catalog
 
-Built artefacts land in `repo/` and rsync to:
-
-```text
-/mnt/bigdrive/Content/web/koalapaw-repo/
-  → https://ryansraspi.hopto.org/koalapaw-repo/manifest.json
-```
+Built artefacts land in `repo/`. Each publish rewrites `sourceUrl` so that catalog points at itself: production at `https://jellyfin.kswapps.com/koalapaw-repo`, the Pi at `https://ryansraspi.hopto.org/koalapaw-repo`.
 
 ```bash
 ./scripts/package.sh          # build DLL, zip, update repo/manifest.json
-./scripts/publish-pi.sh       # rsync repo/ to the Pi (override PI_HOST / PI_REPO_PATH if needed)
+./scripts/publish-prod.sh     # rsync repo/ to jellyfin.kswapps.com
+./scripts/publish-pi.sh       # optional: same catalog on the Pi
 ```
 
 Then in **Jellyfin Dashboard → Plugins → Repositories** add:
 
-`https://ryansraspi.hopto.org/koalapaw-repo/manifest.json`
+`https://jellyfin.kswapps.com/koalapaw-repo/manifest.json`
 
 Install **KoalaPaw Server Companion** → restart Jellyfin → Dashboard → Scheduled Tasks should show
 the KoalaPaw tasks (**video loudness scan**, **intro & credits scan**, plus a small heartbeat). Run
@@ -56,15 +52,10 @@ one once; server logs should show it analysing and writing fields.
 ### Republish / update
 
 1. Bump `version` in `build.yaml` (e.g. `0.0.7.0`) and add its `changelog:` entry
-2. `./scripts/package.sh && ./scripts/publish-pi.sh`
+2. `./scripts/package.sh && ./scripts/publish-prod.sh`
 3. Dashboard → Plugins → KoalaPaw → update / reinstall → **restart**
 
 (Plugins load at startup — there is no hot reload.)
-
-### Production later
-
-Set `REPO_BASE_URL=https://repo.koalapaw.app` when packaging; host the same `repo/` layout on that
-origin. The Android client will eventually write that URL via the “do it for them” flow.
 
 ## Layout
 
@@ -76,7 +67,8 @@ src/KoalaPaw.ServerCompanion/
   ScheduledTasks/               # loudness scan, intro/credits scan (+ theme backfill), heartbeat
   Segments/                     # chromaprint probe, intro/outro correlation, segment provider
 scripts/package.sh              # build DLL + zip + manifest (changelog from build.yaml)
-scripts/publish-pi.sh           # rsync to hopto web root
+scripts/publish-prod.sh         # rsync to jellyfin.kswapps.com
+scripts/publish-pi.sh           # optional rsync to the Pi
 repo/                           # catalog output (generated; committed optional)
 build.yaml                      # name, guid, version, targetAbi, changelog
 tests/                          # xUnit tests for the pure analysis logic

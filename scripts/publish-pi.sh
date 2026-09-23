@@ -17,16 +17,31 @@ if [[ ! -f "$ROOT/repo/manifest.json" ]]; then
   exit 1
 fi
 
+PI_BASE_URL="${PI_BASE_URL:-https://ryansraspi.hopto.org/koalapaw-repo}"
+
 echo "==> rsync $ROOT/repo/ → ${PI_HOST}:${PI_REPO_PATH}/"
 rsync -av --delete \
   --exclude '.git/' \
+  --exclude 'manifest.json' \
   "$ROOT/repo/" \
   "${PI_HOST}:${PI_REPO_PATH}/"
 
+manifest="$(mktemp)"
+python3 "$ROOT/scripts/rewrite-manifest-urls.py" "$ROOT/repo/manifest.json" "$PI_BASE_URL" > "$manifest"
+echo "==> manifest sourceUrls → $PI_BASE_URL"
+rsync -av "$manifest" "${PI_HOST}:${PI_REPO_PATH}/manifest.json"
+rm -f "$manifest"
+
 echo "==> Checking public manifest"
-curl -fsS "https://ryansraspi.hopto.org/koalapaw-repo/manifest.json" | head -c 200
-echo
+manifest="$(mktemp)"
+curl -fsS "https://ryansraspi.hopto.org/koalapaw-repo/manifest.json" -o "$manifest"
+python3 - "$manifest" << 'PY'
+import json, sys
+latest = json.load(open(sys.argv[1]))[0]["versions"][0]
+print(f"  {latest['version']}  targetAbi {latest['targetAbi']}")
+print(f"  {latest['sourceUrl']}")
+PY
+rm -f "$manifest"
 echo
 echo "In Jellyfin Dashboard → Plugins → Repositories, add:"
-echo "  https://ryansraspi.hopto.org/koalapaw-repo/manifest.json"
-echo "Then install \"KoalaPaw Server Companion\" and restart."
+echo "  ${PI_BASE_URL}/manifest.json"

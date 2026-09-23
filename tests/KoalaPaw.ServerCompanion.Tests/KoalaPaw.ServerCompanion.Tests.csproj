@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
@@ -13,13 +13,13 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <!-- The plugin references Jellyfin with ExcludeAssets=runtime (Jellyfin supplies them in-proc),
          but tests that touch Jellyfin types (e.g. MediaSegmentDto) need the assembly at runtime. -->
-    <PackageReference Include="Jellyfin.Model" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Model" Version="12.0.0" />
     <!-- Same for MediaBrowser.Controller: SeasonAnalysisResult is nested in IntroSeasonAnalyser,
          so the mapping tests load it and need the controller assembly at runtime. -->
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Controller" Version="12.0.0" />
     <!-- Same for Jellyfin.Database.Implementations: DirectoryController tests construct User
          entities to exercise the listed-users filtering. -->
-    <PackageReference Include="Jellyfin.Database.Implementations" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Database.Implementations" Version="12.0.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -20,11 +20,20 @@ if [[ ! -f "$ROOT/repo/manifest.json" ]]; then
   exit 1
 fi
 
+PROD_BASE_URL="${PROD_BASE_URL:-https://jellyfin.kswapps.com/koalapaw-repo}"
+
 echo "==> rsync $ROOT/repo/ → ${PROD_HOST}:${REPO_PATH}/"
 rsync -av --delete \
   --exclude '.git/' \
+  --exclude 'manifest.json' \
   "$ROOT/repo/" \
   "${PROD_HOST}:${REPO_PATH}/"
 
+manifest="$(mktemp)"
+python3 "$ROOT/scripts/rewrite-manifest-urls.py" "$ROOT/repo/manifest.json" "$PROD_BASE_URL" > "$manifest"
+echo "==> manifest sourceUrls → $PROD_BASE_URL"
+rsync -av "$manifest" "${PROD_HOST}:${REPO_PATH}/manifest.json"
+rm -f "$manifest"
+
 echo
-echo "==> Done. Verify at https://jellyfin.kswapps.com/koalapaw-repo/manifest.json"
+echo "==> Done. Verify at ${PROD_BASE_URL}/manifest.json"

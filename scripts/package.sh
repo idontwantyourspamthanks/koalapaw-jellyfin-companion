@@ -15,13 +15,14 @@ OWNER="$(grep -E '^owner:' build.yaml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
 CATEGORY="$(grep -E '^category:' build.yaml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
 
 # Public base URL of the catalog (no trailing slash). Override for production later.
-REPO_BASE_URL="${REPO_BASE_URL:-https://ryansraspi.hopto.org/koalapaw-repo}"
+REPO_BASE_URL="${REPO_BASE_URL:-https://jellyfin.kswapps.com/koalapaw-repo}"
 
 DIST="$ROOT/dist"
 OUT_DIR="$ROOT/repo/$VERSION"
 ZIP_NAME="koalapaw-server-companion_${VERSION}.zip"
 ZIP_PATH="$OUT_DIR/$ZIP_NAME"
-DLL_DIR="$ROOT/src/KoalaPaw.ServerCompanion/bin/Release/net9.0"
+FRAMEWORK="$(grep -E '^framework:' build.yaml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+DLL_DIR="$ROOT/src/KoalaPaw.ServerCompanion/bin/Release/$FRAMEWORK"
 
 echo "==> Building $NAME $VERSION (targetAbi $TARGET_ABI)"
 dotnet build "$ROOT/KoalaPaw.ServerCompanion.sln" -c Release --nologo

@@ -1,8 +1,8 @@
 name: "KoalaPaw Server Companion"
 guid: "cea40e65-c04f-4854-b6c4-3428360087fe"
-version: "0.0.14.0"
-targetAbi: "10.11.0.0"
-framework: "net9.0"
+version: "0.0.15.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
 overview: "Skip intros, even out video loudness, and cut TV theme extras from detected intros for KoalaPaw (and any Jellyfin client)."
 description: >
   Open-source Jellyfin companion for KoalaPaw. Analyses your library in the
@@ -13,6 +13,7 @@ owner: "koalapaw"
 artifacts:
   - "KoalaPaw.ServerCompanion.dll"
 changelog: >
+  0.0.15.0 — Jellyfin 12. Requires 12.0 or newer (targetAbi 12.0.0.0, .NET 10). 10.11 keeps 0.0.14.0.
   0.0.14.0 — Watch together: presence and party endpoints under /KoalaPaw/WatchParty so KoalaPaw TVs on the same server (any network) can see who is watching, join them, and keep start/pause/seek/next-item in step. Identity is per device, so two TVs on one profile work.
   0.0.13.1 — TV theme extras from detected intros: after a confident intro, the scan cuts a short sting (up to 20s) from that opening into theme.mp3 on the series folder so KoalaPaw TV can loop it. Existing intros are backfilled. Skips folders that already have theme.* or theme-music/. Films are unchanged. Supersedes 0.0.13.0.
   0.0.13.0 — Withdrawn; use 0.0.13.1.

@@ -40,4 +40,10 @@ public sealed class KoalaPawMediaSegmentProvider : IMediaSegmentProvider
 
         return Task.FromResult(request.ExistingSegments);
     }
+
+    /// <summary>
+    /// Nothing to prune. Segment rows live in Jellyfin, and the theme sting is a series extra, not per-item extracted data.
+    /// </summary>
+    public Task CleanupExtractedData(Guid itemId, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }
